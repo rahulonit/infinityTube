@@ -1,6 +1,8 @@
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 
+import '../services/app_settings_service.dart';
 import '../services/download_manager.dart';
 import '../services/youtube_downloader_service.dart';
 import 'downloads_screen.dart';
@@ -75,6 +77,20 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
 
   void _onDownloadManagerChanged() {
     if (!mounted) return;
+    final metadata = _metadata;
+    if (metadata != null) {
+      for (final option in [
+        ...metadata.videoOptions,
+        ...metadata.audioOptions,
+      ]) {
+        final task = DownloadManager.instance.getTask(
+          '${metadata.id}_${option.id}',
+        );
+        if (task?.isCompleted == true && task!.targetFile.existsSync()) {
+          _downloadedFiles[option.id] = task.targetFile;
+        }
+      }
+    }
     setState(() {});
   }
 
@@ -112,7 +128,7 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
     });
 
     try {
-      final task = await DownloadManager.instance.startDownload(
+      await DownloadManager.instance.startDownload(
         videoId: _metadata!.id,
         title: _metadata!.title,
         author: _metadata!.author,
@@ -124,7 +140,7 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
 
       if (!mounted) return;
       setState(() {
-        _downloadedFiles[option.id] = task.targetFile;
+        _downloadingOptionId = null;
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -209,7 +225,11 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
                         ),
                       );
                     },
-                    icon: const Icon(Icons.folder_open_rounded, color: Colors.white70, size: 20),
+                    icon: const Icon(
+                      Icons.folder_open_rounded,
+                      color: Colors.white70,
+                      size: 20,
+                    ),
                     tooltip: 'All Downloads',
                     constraints: const BoxConstraints(),
                     padding: const EdgeInsets.all(8),
@@ -226,7 +246,9 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       CircularProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFFF0000)),
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Color(0xFFFF0000),
+                        ),
                       ),
                       SizedBox(height: 16),
                       Text(
@@ -239,15 +261,25 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
               )
             else if (_errorMessage != null)
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 40,
+                ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 48),
+                    const Icon(
+                      Icons.error_outline_rounded,
+                      color: Colors.redAccent,
+                      size: 48,
+                    ),
                     const SizedBox(height: 12),
                     Text(
                       _errorMessage!,
-                      style: const TextStyle(color: Colors.white70, fontSize: 13),
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 20),
@@ -273,13 +305,17 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
 
                     // Tabs: Video / Audio
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
                       child: Row(
                         children: [
                           Expanded(
                             child: _buildTabButton(
                               index: 0,
-                              label: 'Video (${_metadata!.videoOptions.length})',
+                              label:
+                                  'Video (${_metadata!.videoOptions.length})',
                               icon: Icons.videocam_rounded,
                             ),
                           ),
@@ -287,7 +323,8 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
                           Expanded(
                             child: _buildTabButton(
                               index: 1,
-                              label: 'Audio Only (${_metadata!.audioOptions.length})',
+                              label:
+                                  'Audio Only (${_metadata!.audioOptions.length})',
                               icon: Icons.audiotrack_rounded,
                             ),
                           ),
@@ -298,12 +335,19 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
                     // Quality Options List
                     Expanded(
                       child: ListView(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
                         children: [
                           if (_selectedTabIndex == 0)
-                            ..._metadata!.videoOptions.map((opt) => _buildOptionTile(opt))
+                            ..._metadata!.videoOptions.map(
+                              (opt) => _buildOptionTile(opt),
+                            )
                           else
-                            ..._metadata!.audioOptions.map((opt) => _buildOptionTile(opt)),
+                            ..._metadata!.audioOptions.map(
+                              (opt) => _buildOptionTile(opt),
+                            ),
                         ],
                       ),
                     ),
@@ -336,7 +380,10 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
                     width: 120,
                     height: 68,
                     color: const Color(0xFF282828),
-                    child: const Icon(Icons.play_circle_outline, color: Colors.white54),
+                    child: const Icon(
+                      Icons.play_circle_outline,
+                      color: Colors.white54,
+                    ),
                   ),
                 ),
               ),
@@ -344,7 +391,10 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
                 bottom: 4,
                 right: 4,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(alpha: 0.8),
                     borderRadius: BorderRadius.circular(4),
@@ -370,7 +420,10 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
                 if (meta.isShort)
                   Container(
                     margin: const EdgeInsets.only(bottom: 4),
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFFFF0000),
                       borderRadius: BorderRadius.circular(4),
@@ -457,15 +510,33 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
   }
 
   Widget _buildOptionTile(DownloadQualityOption option) {
+    final qualityPreference =
+        AppSettingsService.instance.preferredDownloadQuality;
+    final isPreferred = switch (qualityPreference) {
+      PreferredDownloadQuality.audio => option.isAudioOnly,
+      PreferredDownloadQuality.p720 =>
+        !option.isAudioOnly && option.label.contains('720p'),
+      PreferredDownloadQuality.p360 =>
+        !option.isAudioOnly && option.label.contains('360p'),
+      PreferredDownloadQuality.best =>
+        _metadata?.videoOptions.isNotEmpty == true &&
+            _metadata!.videoOptions.first.id == option.id,
+    };
     final taskId = '${_metadata?.id}_${option.id}';
     final task = DownloadManager.instance.getTask(taskId);
-    final bool isDownloading = task?.isDownloading ?? (_downloadingOptionId == option.id);
+    final bool isDownloading =
+        task?.isDownloading ?? (_downloadingOptionId == option.id);
     final bool isPaused = task?.isPaused ?? false;
-    final bool isDownloaded = (task?.isCompleted ?? false) ||
-        _downloadedFiles.containsKey(option.id) ||
-        (isDownloading && _downloadProgress >= 1.0);
-    final double displayProgress = task != null ? task.progress : _downloadProgress;
-    final String displayStatusText = task != null ? task.progressText : _downloadStatusText;
+    final taskFileExists = task?.targetFile.existsSync() ?? false;
+    final cachedFileExists = _downloadedFiles[option.id]?.existsSync() ?? false;
+    final bool isDownloaded =
+        (task?.isCompleted == true && taskFileExists) || cachedFileExists;
+    final double displayProgress = task != null
+        ? task.progress
+        : _downloadProgress;
+    final String displayStatusText = task != null
+        ? task.progressText
+        : _downloadStatusText;
     final File? completedFile = task?.targetFile ?? _downloadedFiles[option.id];
 
     return Container(
@@ -478,10 +549,10 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
           color: isDownloaded
               ? const Color(0xFF00E676).withValues(alpha: 0.5)
               : (isDownloading
-                  ? const Color(0xFF3EA6FF)
-                  : (isPaused
-                      ? Colors.amber.withValues(alpha: 0.5)
-                      : Colors.white.withValues(alpha: 0.06))),
+                    ? const Color(0xFF3EA6FF)
+                    : (isPaused
+                          ? Colors.amber.withValues(alpha: 0.5)
+                          : Colors.white.withValues(alpha: 0.06))),
         ),
       ),
       child: Column(
@@ -496,8 +567,8 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
                   color: option.isAudioOnly
                       ? const Color(0xFF9C27B0).withValues(alpha: 0.2)
                       : (option.hasAudio
-                          ? const Color(0xFF00E676).withValues(alpha: 0.2)
-                          : const Color(0xFF29B6F6).withValues(alpha: 0.2)),
+                            ? const Color(0xFF00E676).withValues(alpha: 0.2)
+                            : const Color(0xFF29B6F6).withValues(alpha: 0.2)),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
@@ -506,8 +577,8 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
                     color: option.isAudioOnly
                         ? const Color(0xFFCE93D8)
                         : (option.hasAudio
-                            ? const Color(0xFF00E676)
-                            : const Color(0xFF81D4FA)),
+                              ? const Color(0xFF00E676)
+                              : const Color(0xFF81D4FA)),
                     fontSize: 10,
                     fontWeight: FontWeight.bold,
                   ),
@@ -525,6 +596,17 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
                   ),
                 ),
               ),
+              if (isPreferred) ...[
+                const Tooltip(
+                  message: 'Preferred quality',
+                  child: Icon(
+                    Icons.star_rounded,
+                    color: Color(0xFFFFC107),
+                    size: 17,
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
               // Size text
               Text(
                 option.sizeText,
@@ -556,6 +638,10 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
                                   ? file.lengthSync()
                                   : option.totalBytes,
                               modified: DateTime.now(),
+                              videoId: _metadata?.id ?? '',
+                              author: _metadata?.author ?? '',
+                              thumbnailUrl: _metadata?.thumbnailUrl ?? '',
+                              isAudioOnly: option.isAudioOnly,
                             ),
                           ),
                         ),
@@ -570,7 +656,10 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
                   style: FilledButton.styleFrom(
                     backgroundColor: const Color(0xFF00E676),
                     foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     minimumSize: Size.zero,
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     shape: RoundedRectangleBorder(
@@ -580,24 +669,38 @@ class _DownloadBottomSheetState extends State<DownloadBottomSheet> {
                 ),
               ] else if (isDownloading) ...[
                 IconButton(
-                  icon: const Icon(Icons.pause_circle_filled_rounded, color: Colors.amber, size: 24),
+                  icon: const Icon(
+                    Icons.pause_circle_filled_rounded,
+                    color: Colors.amber,
+                    size: 24,
+                  ),
                   tooltip: 'Pause Download',
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
-                  onPressed: () => DownloadManager.instance.pauseDownload(taskId),
+                  onPressed: () =>
+                      DownloadManager.instance.pauseDownload(taskId),
                 ),
               ] else if (isPaused) ...[
                 IconButton(
-                  icon: const Icon(Icons.play_circle_fill_rounded, color: Color(0xFF00E676), size: 24),
+                  icon: const Icon(
+                    Icons.play_circle_fill_rounded,
+                    color: Color(0xFF00E676),
+                    size: 24,
+                  ),
                   tooltip: 'Resume Download',
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
-                  onPressed: () => DownloadManager.instance.resumeDownload(taskId),
+                  onPressed: () =>
+                      DownloadManager.instance.resumeDownload(taskId),
                 ),
               ] else
                 IconButton(
                   onPressed: () => _startDownload(option),
-                  icon: const Icon(Icons.download_rounded, color: Color(0xFF3EA6FF), size: 22),
+                  icon: const Icon(
+                    Icons.download_rounded,
+                    color: Color(0xFF3EA6FF),
+                    size: 22,
+                  ),
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
                   tooltip: 'Download',

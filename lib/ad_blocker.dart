@@ -23,6 +23,15 @@ class AdBlocker {
 (function() {
   if (window.__yt_adblock_installed__) return;
   window.__yt_adblock_installed__ = true;
+  const infinitySettings = Object.assign({
+    adBlocking: true,
+    trackerBlocking: true,
+    cosmeticFiltering: true,
+    backgroundPlayback: true,
+    pictureInPicture: true,
+    enhanced1080: true,
+    seekSeconds: 10
+  }, window.__infinitySettings__ || {});
 
   // 1. Helper to notify Flutter when an ad is blocked
   function notifyAdBlocked() {
@@ -35,6 +44,7 @@ class AdBlocker {
 
   // 2. Helper to clean ad placements and ad configurations
   function cleanAdPlacements(obj) {
+    if (!infinitySettings.adBlocking) return false;
     if (!obj || typeof obj !== 'object') return false;
     let modified = false;
     try {
@@ -54,6 +64,23 @@ class AdBlocker {
       notifyAdBlocked();
     }
     return modified;
+  }
+
+  const blockedTrackerHosts = [
+    'doubleclick.net',
+    'googleadservices.com',
+    'googlesyndication.com',
+    'pagead2.googlesyndication.com',
+    '/pagead/',
+    '/ptracking',
+    '/api/stats/ads'
+  ];
+
+  function isBlockedTrackerUrl(url) {
+    if (!infinitySettings.trackerBlocking) return false;
+    if (!url || typeof url !== 'string') return false;
+    const normalized = url.toLowerCase();
+    return blockedTrackerHosts.some(pattern => normalized.includes(pattern));
   }
 
   // 3. Intercept window.ytInitialPlayerResponse (initial cold load)
@@ -86,10 +113,16 @@ class AdBlocker {
   try {
     const origFetch = window.fetch;
     window.fetch = async function(...args) {
-      const response = await origFetch.apply(this, args);
       const url = typeof args[0] === 'string'
         ? args[0]
         : (args[0] && args[0].url ? args[0].url : '');
+
+      if (isBlockedTrackerUrl(url)) {
+        notifyAdBlocked();
+        return new Response('', { status: 204, statusText: 'Blocked' });
+      }
+
+      const response = await origFetch.apply(this, args);
 
       if (url && (url.includes('/youtubei/v1/player') || url.includes('/get_midroll_info'))) {
         try {
@@ -114,11 +147,17 @@ class AdBlocker {
     const origOpen = XMLHttpRequest.prototype.open;
     const origSend = XMLHttpRequest.prototype.send;
     XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+      this._isBlockedTracker = isBlockedTrackerUrl(url);
       this._isPlayerUrl = typeof url === 'string' &&
         (url.includes('/youtubei/v1/player') || url.includes('/get_midroll_info'));
       return origOpen.apply(this, [method, url, ...rest]);
     };
     XMLHttpRequest.prototype.send = function(...args) {
+      if (this._isBlockedTracker) {
+        notifyAdBlocked();
+        try { this.abort(); } catch(e) {}
+        return;
+      }
       if (this._isPlayerUrl) {
         this.addEventListener('readystatechange', function() {
           if (this.readyState === 4 && this.status === 200) {
@@ -142,9 +181,11 @@ class AdBlocker {
   } catch(e) {}
 
   // 7. Fast Video Ad Terminator (for starting / in-video ads that reach the DOM)
-  let lastMutedByAdblock = false;
+  let adWasActive = false;
+  const mediaStateBeforeAd = new Map();
 
   function killVideoAds() {
+    if (!infinitySettings.adBlocking) return;
     const player = document.querySelector('#movie_player') ||
                    document.querySelector('.html5-video-player') ||
                    document.querySelector('.video-stream');
@@ -160,10 +201,13 @@ class AdBlocker {
       const videos = document.querySelectorAll('video');
       videos.forEach(v => {
         try {
-          if (!v.muted) {
-            v.muted = true;
-            lastMutedByAdblock = true;
+          if (!adWasActive) {
+            mediaStateBeforeAd.set(v, {
+              muted: v.muted,
+              playbackRate: v.playbackRate
+            });
           }
+          v.muted = true;
           v.playbackRate = 16.0;
           if (v.duration && isFinite(v.duration) && v.duration > 0) {
             v.currentTime = v.duration;
@@ -172,6 +216,7 @@ class AdBlocker {
           }
         } catch(e) {}
       });
+      adWasActive = true;
 
       // Click all variations of skip buttons (mobile & desktop)
       const skipButtons = document.querySelectorAll(
@@ -183,16 +228,16 @@ class AdBlocker {
       skipButtons.forEach(btn => {
         try { btn.click(); } catch(e) {}
       });
-    } else if (lastMutedByAdblock) {
-      // Ad finished: restore speed and unmute
-      const videos = document.querySelectorAll('video');
-      videos.forEach(v => {
-        if (v.playbackRate === 16.0) {
-          v.playbackRate = 1.0;
-        }
-        v.muted = false;
+    } else if (adWasActive) {
+      // Restore each video's exact pre-ad mute and playback-rate state.
+      mediaStateBeforeAd.forEach((state, video) => {
+        try {
+          video.playbackRate = state.playbackRate;
+          video.muted = state.muted;
+        } catch(e) {}
       });
-      lastMutedByAdblock = false;
+      mediaStateBeforeAd.clear();
+      adWasActive = false;
     }
 
     // Dismiss any anti-adblock enforcement dialogs
@@ -215,6 +260,7 @@ class AdBlocker {
 
   // 8. OLED Pitch-Black Theme & Web Clutter / Nag Removal CSS
   function injectOledAndClutterRemovalStyles() {
+    if (!infinitySettings.cosmeticFiltering) return;
     if (document.getElementById('__yt_oled_clutter_css__')) return;
     const style = document.createElement('style');
     style.id = '__yt_oled_clutter_css__';
@@ -341,6 +387,31 @@ class AdBlocker {
         pointer-events: auto !important;
       }
 
+      /* Keep native actions usable instead of overflowing on narrow phones. */
+      ytm-slim-video-action-bar-renderer,
+      ytm-video-action-bar-renderer,
+      #top-level-buttons-computed {
+        overflow-x: auto !important;
+        scrollbar-width: none !important;
+      }
+      @media (max-width: 480px) {
+        #__yt_video_action_download_btn__,
+        #__yt_video_action_pip_btn__ {
+          min-width: 48px !important;
+          width: 48px !important;
+          padding: 0 12px !important;
+        }
+        #__yt_video_action_download_btn__ span,
+        #__yt_video_action_pip_btn__ span {
+          display: none !important;
+        }
+        #__yt_video_action_jump_btn__,
+        #__yt_video_action_queue_btn__ {
+          min-width: 60px !important;
+          padding: 0 8px !important;
+        }
+      }
+
       /* Hide YouTube web bottom pivot bar because native 4-tab Flutter navbar is active */
       ytm-pivot-bar-renderer,
       .pivot-bar-item-tab {
@@ -416,11 +487,11 @@ class AdBlocker {
         const video = document.querySelector('video');
         if (video) {
           if (tapX < width * 0.4) {
-            video.currentTime = Math.max(0, video.currentTime - 10);
-            showGestureFeedback('◀◀ 10s', touch.clientX, touch.clientY);
+            video.currentTime = Math.max(0, video.currentTime - infinitySettings.seekSeconds);
+            showGestureFeedback('◀◀ ' + infinitySettings.seekSeconds + 's', touch.clientX, touch.clientY);
           } else if (tapX > width * 0.6) {
-            video.currentTime = Math.min(video.duration || 99999, video.currentTime + 10);
-            showGestureFeedback('10s ▶▶', touch.clientX, touch.clientY);
+            video.currentTime = Math.min(video.duration || 99999, video.currentTime + infinitySettings.seekSeconds);
+            showGestureFeedback(infinitySettings.seekSeconds + 's ▶▶', touch.clientX, touch.clientY);
           }
         }
       }
@@ -433,6 +504,7 @@ class AdBlocker {
 
   // 10. Background Play Enabler: Prevent player from pausing when app is minimized or screen off
   try {
+    if (!infinitySettings.backgroundPlayback) throw new Error('disabled');
     Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
     Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
     Object.defineProperty(document, 'webkitVisibilityState', { get: () => 'visible', configurable: true });
@@ -447,14 +519,48 @@ class AdBlocker {
   window.__togglePiP__ = async function() {
     try {
       const video = document.querySelector('video');
-      if (video) {
+      if (video && document.pictureInPictureEnabled) {
         if (document.pictureInPictureElement) {
           await document.exitPictureInPicture();
+          return true;
         } else if (video.requestPictureInPicture) {
           await video.requestPictureInPicture();
+          return true;
         }
       }
     } catch(e) {}
+    return false;
+  };
+
+  window.__setNativePiPMode__ = function(enabled) {
+    try {
+      let style = document.getElementById('__infinity_native_pip_style__');
+      if (!style) {
+        style = document.createElement('style');
+        style.id = '__infinity_native_pip_style__';
+        style.textContent = `
+          html.__infinity_native_pip__,
+          html.__infinity_native_pip__ body {
+            background: #000 !important;
+            overflow: hidden !important;
+          }
+          html.__infinity_native_pip__ video {
+            position: fixed !important;
+            inset: 0 !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            object-fit: contain !important;
+            background: #000 !important;
+            z-index: 2147483647 !important;
+          }
+        `;
+        (document.head || document.documentElement).appendChild(style);
+      }
+      document.documentElement.classList.toggle('__infinity_native_pip__', !!enabled);
+      return true;
+    } catch(e) {
+      return false;
+    }
   };
 
   // 12. Jump Ahead: Skips +30s or to peak interest moments
@@ -469,10 +575,11 @@ class AdBlocker {
 
   // 13. Enhanced 1080p: Auto-requests highest available bitrate quality on player
   function setEnhanced1080pQuality() {
+    if (!infinitySettings.enhanced1080) return;
     try {
       const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
       if (player && typeof player.setPlaybackQualityRange === 'function') {
-        player.setPlaybackQualityRange('highres', 'hd1080');
+        player.setPlaybackQualityRange('hd1080', 'hd1080');
       }
     } catch(e) {}
   }
@@ -483,7 +590,28 @@ class AdBlocker {
     if (!video || video.__monitoring_installed__) return;
     video.__monitoring_installed__ = true;
 
+    function reportPlaybackState() {
+      try {
+        if (window.PlayerStateChannel) {
+          window.PlayerStateChannel.postMessage(JSON.stringify({
+            type: 'playback',
+            playing: !video.paused && !video.ended && video.readyState > 1,
+            width: video.videoWidth || 16,
+            height: video.videoHeight || 9,
+          }));
+        }
+      } catch(e) {}
+    }
+
+    video.addEventListener('play', reportPlaybackState);
+    video.addEventListener('playing', reportPlaybackState);
+    video.addEventListener('pause', reportPlaybackState);
+    video.addEventListener('loadedmetadata', reportPlaybackState);
+    video.addEventListener('emptied', reportPlaybackState);
+    reportPlaybackState();
+
     video.addEventListener('ended', () => {
+      reportPlaybackState();
       try {
         if (window.PlayerStateChannel) {
           window.PlayerStateChannel.postMessage(JSON.stringify({ type: 'ended' }));
@@ -544,12 +672,39 @@ class AdBlocker {
     } catch(e) {}
   }
 
-  // 12. Configures YouTube bottom navigation bar to: [Home] [Shorts] [You] [Download]
+  // YouTube enforces Trusted Types. Build injected controls with DOM nodes
+  // instead of assigning HTML strings, which Chromium blocks and logs.
+  function createControlIcon(pathData, size, fill) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('width', String(size));
+    svg.setAttribute('height', String(size));
+    svg.setAttribute('fill', fill);
+    svg.style.pointerEvents = 'none';
+    svg.style.flexShrink = '0';
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', pathData);
+    svg.appendChild(path);
+    return svg;
+  }
+
+  function createControlLabel(text, cssText) {
+    const label = document.createElement('span');
+    label.textContent = text;
+    label.style.cssText = cssText;
+    return label;
+  }
+
+  const downloadIconPath = 'M12 16l4-4h-3V4h-2v8H8l4 4zm9 4H3v-2h18v2z';
+  const pipIconPath = 'M19 11h-8v6h8v-6zm4 8V4.98C23 3.88 22.1 3 21 3H3c-1.1 0-2 .88-2 1.98V19c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2zm-2 .02H3V4.97h18v14.05z';
+  const premiumIconPath = 'M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z';
+
+  // 12. Configures YouTube bottom navigation bar to: [Home] [Shorts] [Settings] [Download]
   function setupYouTubeNavBar() {
     const pivotBar = document.querySelector('ytm-pivot-bar-renderer');
     if (pivotBar) {
       const items = Array.from(pivotBar.querySelectorAll('ytm-pivot-bar-item-renderer, .pivot-bar-item-tab, a.pivot-bar-item-tab'))
-                         .filter(el => el.id !== '__yt_downloads_pivot_tab__');
+                         .filter(el => el.id !== '__yt_downloads_pivot_tab__' && el.id !== '__yt_settings_pivot_tab__');
 
       let homeItem = null;
       let shortsItem = null;
@@ -581,15 +736,45 @@ class AdBlocker {
         item.style.setProperty('display', 'none', 'important');
       });
 
-      // If both Subscriptions and You exist, prioritize "You"
-      if (youItem && subsItem) {
-        subsItem.style.setProperty('display', 'none', 'important');
-      } else if (!youItem && subsItem) {
-        youItem = subsItem;
-        const titleEl = youItem.querySelector('.pivot-bar-item-title, span, div');
-        if (titleEl && titleEl.textContent && titleEl.textContent.trim().toLowerCase().includes('sub')) {
-          titleEl.textContent = 'You';
-        }
+      // Native Settings replaces You/Subscriptions in the strict 4-tab layout.
+      if (youItem) youItem.style.setProperty('display', 'none', 'important');
+      if (subsItem) subsItem.style.setProperty('display', 'none', 'important');
+
+      let settingsTab = document.getElementById('__yt_settings_pivot_tab__');
+      if (!settingsTab) {
+        settingsTab = document.createElement('div');
+        settingsTab.id = '__yt_settings_pivot_tab__';
+        settingsTab.className = 'ytm-pivot-bar-item-renderer pivot-bar-item-tab';
+        settingsTab.style.cssText = `
+          flex: 1 1 0;
+          max-width: 25%;
+          height: 100%;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          user-select: none;
+          -webkit-tap-highlight-color: transparent;
+          color: #ffffff;
+        `;
+        settingsTab.appendChild(createControlLabel(
+          '⚙',
+          'color:#ffffff;font-size:22px;line-height:24px;font-family:Arial,sans-serif;'
+        ));
+        settingsTab.appendChild(createControlLabel(
+          'Settings',
+          'font-size:10px;color:#ffffff;margin-top:3px;font-weight:500;font-family:Roboto,Arial,sans-serif;'
+        ));
+        settingsTab.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          try {
+            if (window.DownloadsChannel) {
+              window.DownloadsChannel.postMessage('open_settings');
+            }
+          } catch(err) {}
+        }, true);
       }
 
       // Create or retrieve Download Tab
@@ -611,14 +796,14 @@ class AdBlocker {
           -webkit-tap-highlight-color: transparent;
           color: #ffffff;
         `;
-        downloadTab.innerHTML = `
-          <div style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="#ffffff">
-              <path d="M12 16l4-4h-3V4h-2v8H8l4 4zm9 4H3v-2h18v2z"/>
-            </svg>
-          </div>
-          <div style="font-size: 10px; color: #ffffff; margin-top: 3px; font-weight: 500; letter-spacing: -0.2px; font-family: Roboto, Arial, sans-serif;">Download</div>
-        `;
+        const iconWrap = document.createElement('div');
+        iconWrap.style.cssText = 'width:24px;height:24px;display:flex;align-items:center;justify-content:center;';
+        iconWrap.appendChild(createControlIcon(downloadIconPath, 22, '#ffffff'));
+        downloadTab.appendChild(iconWrap);
+        downloadTab.appendChild(createControlLabel(
+          'Download',
+          'font-size:10px;color:#ffffff;margin-top:3px;font-weight:500;letter-spacing:-0.2px;font-family:Roboto,Arial,sans-serif;'
+        ));
 
         downloadTab.addEventListener('click', (e) => {
           e.preventDefault();
@@ -631,16 +816,14 @@ class AdBlocker {
         }, true);
       }
 
-      // Re-order strictly: [Home] -> [Shorts] -> [You] -> [Download]
+      // Re-order strictly: [Home] -> [Shorts] -> [Settings] -> [Download]
       if (homeItem && homeItem.parentElement === pivotBar) {
         pivotBar.appendChild(homeItem);
       }
       if (shortsItem && shortsItem.parentElement === pivotBar) {
         pivotBar.appendChild(shortsItem);
       }
-      if (youItem && youItem.parentElement === pivotBar) {
-        pivotBar.appendChild(youItem);
-      }
+      pivotBar.appendChild(settingsTab);
       pivotBar.appendChild(downloadTab);
     }
 
@@ -653,14 +836,14 @@ class AdBlocker {
       entry.setAttribute('role', 'tab');
       entry.setAttribute('tabindex', '0');
       entry.style.cssText = 'cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px 0; color: #fff;';
-      entry.innerHTML = `
-        <div style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; margin-bottom: 6px;">
-          <svg viewBox="0 0 24 24" width="24" height="24" fill="#fff">
-            <path d="M12 16l4-4h-3V4h-2v8H8l4 4zm9 4H3v-2h18v2z"/>
-          </svg>
-        </div>
-        <span style="font-size: 10px; color: #fff; font-family: Roboto, Arial, sans-serif;">Download</span>
-      `;
+      const guideIconWrap = document.createElement('div');
+      guideIconWrap.style.cssText = 'width:24px;height:24px;display:flex;align-items:center;justify-content:center;margin-bottom:6px;';
+      guideIconWrap.appendChild(createControlIcon(downloadIconPath, 24, '#ffffff'));
+      entry.appendChild(guideIconWrap);
+      entry.appendChild(createControlLabel(
+        'Download',
+        'font-size:10px;color:#ffffff;font-family:Roboto,Arial,sans-serif;'
+      ));
       entry.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -740,12 +923,13 @@ class AdBlocker {
           visibility: visible !important;
           opacity: 1 !important;
         `;
-        dlBtn.innerHTML = `
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="#ffffff" style="margin-right: 6px; flex-shrink: 0; pointer-events: none;">
-            <path d="M12 16l4-4h-3V4h-2v8H8l4 4zm9 4H3v-2h18v2z"/>
-          </svg>
-          <span style="color: #ffffff !important; font-size: 13px !important; font-weight: 600 !important; pointer-events: none; white-space: nowrap !important;">Download</span>
-        `;
+        const downloadIcon = createControlIcon(downloadIconPath, 18, '#ffffff');
+        downloadIcon.style.marginRight = '6px';
+        dlBtn.appendChild(downloadIcon);
+        dlBtn.appendChild(createControlLabel(
+          'Download',
+          'color:#ffffff;font-size:13px;font-weight:600;pointer-events:none;white-space:nowrap;'
+        ));
         dlBtn.addEventListener('click', (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -854,7 +1038,11 @@ class AdBlocker {
       // Also inject PiP button right after Download button if on video page
       if (inserted && dlBtn.parentElement) {
         let pipBtn = document.getElementById('__yt_video_action_pip_btn__');
-        if (!pipBtn) {
+        if (!infinitySettings.pictureInPicture && pipBtn) {
+          pipBtn.remove();
+          pipBtn = null;
+        }
+        if (!pipBtn && infinitySettings.pictureInPicture) {
           pipBtn = document.createElement('button');
           pipBtn.id = '__yt_video_action_pip_btn__';
           pipBtn.setAttribute('type', 'button');
@@ -862,20 +1050,73 @@ class AdBlocker {
           pipBtn.setAttribute('aria-label', 'Picture in Picture');
           pipBtn.style.cssText = dlBtn.style.cssText;
           pipBtn.style.minWidth = '75px';
-          pipBtn.innerHTML = `
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="#3EA6FF" style="margin-right: 5px; flex-shrink: 0; pointer-events: none;">
-              <path d="M19 11h-8v6h8v-6zm4 8V4.98C23 3.88 22.1 3 21 3H3c-1.1 0-2 .88-2 1.98V19c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2zm-2 .02H3V4.97h18v14.05z"/>
-            </svg>
-            <span style="color: #ffffff !important; font-size: 13px !important; font-weight: 600 !important; pointer-events: none;">PiP</span>
-          `;
+          const pipIcon = createControlIcon(pipIconPath, 18, '#3EA6FF');
+          pipIcon.style.marginRight = '5px';
+          pipBtn.appendChild(pipIcon);
+          pipBtn.appendChild(createControlLabel(
+            'PiP',
+            'color:#ffffff;font-size:13px;font-weight:600;pointer-events:none;'
+          ));
           pipBtn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            if (window.__togglePiP__) window.__togglePiP__();
+            try {
+              if (window.DownloadsChannel) {
+                window.DownloadsChannel.postMessage('pip');
+              }
+            } catch(err) {}
           }, true);
         }
-        if (dlBtn.nextSibling !== pipBtn && dlBtn.parentElement) {
+        if (pipBtn && dlBtn.nextSibling !== pipBtn && dlBtn.parentElement) {
           dlBtn.parentElement.insertBefore(pipBtn, dlBtn.nextSibling);
+        }
+
+        let jumpBtn = document.getElementById('__yt_video_action_jump_btn__');
+        if (!jumpBtn) {
+          jumpBtn = document.createElement('button');
+          jumpBtn.id = '__yt_video_action_jump_btn__';
+          jumpBtn.type = 'button';
+          jumpBtn.setAttribute('aria-label', 'Jump ahead 30 seconds');
+          jumpBtn.style.cssText = dlBtn.style.cssText;
+          jumpBtn.style.minWidth = '68px';
+          jumpBtn.style.padding = '0 10px';
+          jumpBtn.textContent = '+30s';
+          jumpBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            try {
+              if (window.DownloadsChannel) {
+                window.DownloadsChannel.postMessage('jump_ahead');
+              }
+            } catch(err) {}
+          }, true);
+        }
+        if ((pipBtn ? pipBtn.nextSibling : dlBtn.nextSibling) !== jumpBtn && dlBtn.parentElement) {
+          dlBtn.parentElement.insertBefore(jumpBtn, pipBtn ? pipBtn.nextSibling : dlBtn.nextSibling);
+        }
+
+        let queueBtn = document.getElementById('__yt_video_action_queue_btn__');
+        if (!queueBtn) {
+          queueBtn = document.createElement('button');
+          queueBtn.id = '__yt_video_action_queue_btn__';
+          queueBtn.type = 'button';
+          queueBtn.setAttribute('aria-label', 'Open watch queue');
+          queueBtn.style.cssText = dlBtn.style.cssText;
+          queueBtn.style.minWidth = '72px';
+          queueBtn.style.padding = '0 10px';
+          queueBtn.textContent = 'Queue';
+          queueBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            try {
+              if (window.DownloadsChannel) {
+                window.DownloadsChannel.postMessage('open_queue');
+              }
+            } catch(err) {}
+          }, true);
+        }
+        if (jumpBtn.nextSibling !== queueBtn && dlBtn.parentElement) {
+          dlBtn.parentElement.insertBefore(queueBtn, jumpBtn.nextSibling);
         }
       }
 
@@ -907,14 +1148,14 @@ class AdBlocker {
             visibility: visible !important;
             opacity: 1 !important;
           `;
-          sDl.innerHTML = `
-            <div style="width: 44px; height: 44px; background: rgba(30, 30, 30, 0.85); border: 1px solid rgba(255,255,255,0.3); border-radius: 50%; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(8px);">
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="#ffffff">
-                <path d="M12 16l4-4h-3V4h-2v8H8l4 4zm9 4H3v-2h18v2z"/>
-              </svg>
-            </div>
-            <span style="color: #ffffff; font-size: 10px; font-weight: 600; margin-top: 3px; font-family: Roboto, Arial, sans-serif;">Download</span>
-          `;
+          const shortsIconWrap = document.createElement('div');
+          shortsIconWrap.style.cssText = 'width:44px;height:44px;background:rgba(30,30,30,0.85);border:1px solid rgba(255,255,255,0.3);border-radius:50%;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px);';
+          shortsIconWrap.appendChild(createControlIcon(downloadIconPath, 22, '#ffffff'));
+          sDl.appendChild(shortsIconWrap);
+          sDl.appendChild(createControlLabel(
+            'Download',
+            'color:#ffffff;font-size:10px;font-weight:600;margin-top:3px;font-family:Roboto,Arial,sans-serif;'
+          ));
           sDl.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -973,12 +1214,13 @@ class AdBlocker {
             letter-spacing: 0.2px !important;
             flex-shrink: 0 !important;
           `;
-          premBtn.innerHTML = `
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="#ff0077" style="margin-right: 4px; flex-shrink: 0; pointer-events: none;">
-              <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
-            </svg>
-            <span style="color: #ffffff !important; font-size: 11px !important; font-weight: 700 !important; pointer-events: none;">Premium</span>
-          `;
+          const premiumIcon = createControlIcon(premiumIconPath, 15, '#ff0077');
+          premiumIcon.style.marginRight = '4px';
+          premBtn.appendChild(premiumIcon);
+          premBtn.appendChild(createControlLabel(
+            'Premium',
+            'color:#ffffff;font-size:11px;font-weight:700;pointer-events:none;'
+          ));
           premBtn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -1003,19 +1245,22 @@ class AdBlocker {
     injectYouTubeCustomUI();
     setupPlayerMonitoring();
     setEnhanced1080pQuality();
-  }, 100);
+  }, 750);
 
   // 14. Observe DOM additions
   try {
+    let mutationRefreshTimer = null;
     const observer = new MutationObserver(() => {
-      killVideoAds();
-      injectOledAndClutterRemovalStyles();
-      installDoubleTapGestures();
-      unlockScroll();
-      setupYouTubeNavBar();
-      injectYouTubeCustomUI();
-      setupPlayerMonitoring();
-      setEnhanced1080pQuality();
+      clearTimeout(mutationRefreshTimer);
+      mutationRefreshTimer = setTimeout(() => {
+        injectOledAndClutterRemovalStyles();
+        installDoubleTapGestures();
+        unlockScroll();
+        setupYouTubeNavBar();
+        injectYouTubeCustomUI();
+        setupPlayerMonitoring();
+        setEnhanced1080pQuality();
+      }, 100);
     });
 
     observer.observe(document.documentElement || document.body, {

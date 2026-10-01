@@ -1,6 +1,10 @@
 import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
 import '../youtube_webview_shell.dart';
+import 'web_platform_notice.dart';
 
 /// Premium animated splash screen for YouTube.
 ///
@@ -48,7 +52,10 @@ class _SplashScreenState extends State<SplashScreen>
     _controller.forward();
 
     // Transition to main webview shell after brief splash animation
-    _navigationTimer = Timer(const Duration(milliseconds: 1800), _navigateToApp);
+    _navigationTimer = Timer(
+      const Duration(milliseconds: 1800),
+      _navigateToApp,
+    );
   }
 
   void _navigateToApp() {
@@ -56,7 +63,7 @@ class _SplashScreenState extends State<SplashScreen>
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) =>
-            const YouTubeWebViewShell(),
+            kIsWeb ? const WebPlatformNotice() : const YouTubeWebViewShell(),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return FadeTransition(opacity: animation, child: child);
         },
@@ -96,12 +103,14 @@ class _SplashScreenState extends State<SplashScreen>
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF0070FF).withValues(alpha: 0.35),
+                          color: const Color(0xFF0070FF)
+                              .withValues(alpha: 0.35),
                           blurRadius: 40,
                           spreadRadius: 8,
                         ),
                         BoxShadow(
-                          color: const Color(0xFFFF0077).withValues(alpha: 0.25),
+                          color: const Color(0xFFFF0077)
+                              .withValues(alpha: 0.25),
                           blurRadius: 50,
                           spreadRadius: 10,
                         ),
@@ -156,7 +165,10 @@ class _SplashScreenState extends State<SplashScreen>
                   ),
                   const SizedBox(width: 6),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
                         colors: [Color(0xFF0070FF), Color(0xFFFF0077)],

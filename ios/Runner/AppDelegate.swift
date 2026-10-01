@@ -23,5 +23,25 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    let storageChannel = FlutterMethodChannel(
+      name: "infinitytube/storage",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    storageChannel.setMethodCallHandler { call, result in
+      guard call.method == "getStorageInfo" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      do {
+        let values = try FileManager.default.attributesOfFileSystem(
+          forPath: NSHomeDirectory()
+        )
+        let total = (values[.systemSize] as? NSNumber)?.int64Value ?? 0
+        let free = (values[.systemFreeSize] as? NSNumber)?.int64Value ?? 0
+        result(["totalBytes": total, "freeBytes": free])
+      } catch {
+        result(FlutterError(code: "storage_unavailable", message: error.localizedDescription, details: nil))
+      }
+    }
   }
 }

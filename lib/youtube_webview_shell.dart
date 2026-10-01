@@ -12,6 +12,7 @@ import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
 import 'ad_blocker.dart';
 import 'constants.dart';
+import 'services/app_settings_service.dart';
 import 'services/queue_service.dart';
 import 'services/smart_downloads_service.dart';
 import 'services/watch_history_service.dart';
@@ -19,6 +20,7 @@ import 'services/youtube_downloader_service.dart';
 import 'ui/download_bottom_sheet.dart';
 import 'ui/downloads_screen.dart';
 import 'ui/loading_skeleton.dart';
+import 'ui/settings_screen.dart';
 
 /// A full-screen, native-feeling YouTube WebView shell with:
 /// - True OLED pitch-black theme (`#000000`).
@@ -60,6 +62,10 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
 
   bool _showSignInNotice = false;
   bool _isFullscreen = false;
+  bool _isInNativePiP = false;
+  bool _isVideoPlaying = false;
+  int _videoWidth = 16;
+  int _videoHeight = 9;
 
   String? _activeVideoId;
   bool _isActiveShort = false;
@@ -67,12 +73,20 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
 
   Widget? _customFullscreenWidget;
 
+  void _log(String message) {
+    if (kDebugMode && AppSettingsService.instance.diagnosticLoggingEnabled) {
+      debugPrint(message);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     WatchHistoryService.instance.addListener(_onServiceUpdate);
     QueueService.instance.addListener(_onServiceUpdate);
     SmartDownloadsService.instance.addListener(_onServiceUpdate);
+    AppSettingsService.instance.addListener(_onSettingsUpdate);
+    _platformPlaybackChannel.setMethodCallHandler(_handlePlatformPlaybackCall);
     _initializeWebViewController();
   }
 
@@ -80,11 +94,18 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
     if (mounted) setState(() {});
   }
 
+  void _onSettingsUpdate() {
+    if (mounted) setState(() {});
+    _syncNativePiPState();
+  }
+
   @override
   void dispose() {
     WatchHistoryService.instance.removeListener(_onServiceUpdate);
     QueueService.instance.removeListener(_onServiceUpdate);
     SmartDownloadsService.instance.removeListener(_onServiceUpdate);
+    AppSettingsService.instance.removeListener(_onSettingsUpdate);
+    _platformPlaybackChannel.setMethodCallHandler(null);
     // Restore default system UI mode and all orientations
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
@@ -107,9 +128,7 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
     _controller = WebViewController.fromPlatformCreationParams(
       params,
       onPermissionRequest: (WebViewPermissionRequest request) {
-        debugPrint(
-          '[Security] Denied permission request for: ${request.types}',
-        );
+        _log('[Security] Denied permission request for: ${request.types}');
         request.deny();
       },
     );
@@ -122,7 +141,7 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
     _controller.addJavaScriptChannel(
       'AdBlockChannel',
       onMessageReceived: (JavaScriptMessage message) {
-        debugPrint('[AdBlock] Blocked advertisement.');
+        _log('[AdBlock] Blocked advertisement.');
       },
     );
 
@@ -139,6 +158,8 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
       onMessageReceived: (JavaScriptMessage message) {
         if (message.message == 'open_downloads') {
           _openDownloadsScreen();
+        } else if (message.message == 'open_settings') {
+          _openSettingsScreen();
         } else if (message.message == 'download_active_video') {
           _handleDownloadPressed();
         } else if (message.message == 'open_queue') {
@@ -218,7 +239,7 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
           _updateActiveVideoState(url);
         },
         onWebResourceError: (WebResourceError error) {
-          debugPrint(
+          _log(
             '[WebView Error] Code: ${error.errorCode}, Type: ${error.errorType}, Desc: ${error.description}, URL: ${error.url}, isMainFrame: ${error.isForMainFrame}',
           );
           if (error.isForMainFrame ?? true) {
@@ -246,7 +267,7 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
             return NavigationDecision.navigate;
           }
 
-          debugPrint(
+          _log(
             '[Security] Blocked top-level navigation to unapproved host: ${uri.host}',
           );
           _showExternalLinkBlockedNotice(request.url);
@@ -282,10 +303,6 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
     int? newIndex;
     if (YouTubeDownloaderService.isShortsUrl(url)) {
       newIndex = 1;
-    } else if (url.contains('/feed/you') ||
-        url.contains('/feed/library') ||
-        url.contains('/account')) {
-      newIndex = 2;
     } else if (url.endsWith('youtube.com/') ||
         url.endsWith('youtube.com') ||
         url.contains('/?app=')) {
@@ -352,6 +369,12 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
 
   Future<void> _injectAdBlocker() async {
     try {
+      final configuration = jsonEncode(
+        AppSettingsService.instance.toWebConfiguration(),
+      );
+      await _controller.runJavaScript(
+        'window.__infinitySettings__ = $configuration;',
+      );
       await _controller.runJavaScript(AdBlocker.injectionScript);
     } catch (_) {
       // Ignored if webview engine is not yet ready
@@ -376,7 +399,12 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
   }
 
   void _handleResponsiveLayout(double availableWidth) {
-    final bool shouldBeDesktop = availableWidth >= widget.breakpoint;
+    final preference = AppSettingsService.instance.preferredExperience;
+    final bool shouldBeDesktop = switch (preference) {
+      PreferredExperience.desktop => true,
+      PreferredExperience.mobile => false,
+      PreferredExperience.automatic => availableWidth >= widget.breakpoint,
+    };
 
     if (!_isControllerInitialized) {
       _isControllerInitialized = true;
@@ -486,7 +514,12 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
     try {
       final data = jsonDecode(rawJson) as Map<String, dynamic>;
       final type = data['type'] as String?;
-      if (type == 'progress') {
+      if (type == 'playback') {
+        _isVideoPlaying = data['playing'] as bool? ?? false;
+        _videoWidth = (data['width'] as num?)?.toInt() ?? 16;
+        _videoHeight = (data['height'] as num?)?.toInt() ?? 9;
+        _syncNativePiPState();
+      } else if (type == 'progress') {
         final url = data['url'] as String?;
         final videoId =
             YouTubeDownloaderService.extractVideoId(url) ?? _activeVideoId;
@@ -494,12 +527,14 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
         final position = data['position'] as int? ?? 0;
         final duration = data['duration'] as int? ?? 0;
         if (videoId != null && duration > 0) {
-          WatchHistoryService.instance.saveProgress(
-            videoId: videoId,
-            title: title,
-            positionSeconds: position,
-            durationSeconds: duration,
-          );
+          if (AppSettingsService.instance.continueWatchingEnabled) {
+            WatchHistoryService.instance.saveProgress(
+              videoId: videoId,
+              title: title,
+              positionSeconds: position,
+              durationSeconds: duration,
+            );
+          }
           SmartDownloadsService.instance.processSmartDownloadForVideo(videoId);
         }
       } else if (type == 'ended') {
@@ -523,28 +558,35 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
   }
 
   Future<void> _handlePiP() async {
+    if (!AppSettingsService.instance.pictureInPictureEnabled) {
+      _showPiPUnavailableMessage();
+      return;
+    }
     var webPiPSupported = false;
+    var webPiPEntered = false;
     try {
       final result = await _controller.runJavaScriptReturningResult(
-        "typeof window.__togglePiP__ === 'function' ? 'supported' : 'unsupported'",
+        "(document.pictureInPictureEnabled === true && !!document.querySelector('video')?.requestPictureInPicture) ? 'supported' : 'unsupported'",
       );
       webPiPSupported =
           result.toString().contains('supported') &&
           !result.toString().contains('unsupported');
       if (webPiPSupported) {
-        await _controller.runJavaScript(
-          'if (window.__togglePiP__) window.__togglePiP__();',
+        final toggled = await _controller.runJavaScriptReturningResult(
+          '(async function(){ return window.__togglePiP__ ? await window.__togglePiP__() : false; })()',
         );
+        webPiPEntered = toggled.toString().toLowerCase().contains('true');
       }
     } catch (_) {}
 
     // Chromium WebView commonly omits the page-level Picture-in-Picture API.
     // Fall back to Android's native activity PiP so the playing WebView itself
     // remains visible above other applications.
-    if (Platform.isAndroid && !webPiPSupported) {
+    if (Platform.isAndroid && !webPiPEntered) {
       try {
         final entered = await _platformPlaybackChannel.invokeMethod<bool>(
           'enterPiP',
+          {'width': _videoWidth, 'height': _videoHeight},
         );
         if (entered != true && mounted) {
           _showPiPUnavailableMessage();
@@ -552,7 +594,36 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
       } on PlatformException {
         if (mounted) _showPiPUnavailableMessage();
       }
+    } else if (!webPiPEntered && mounted) {
+      _showPiPUnavailableMessage();
     }
+  }
+
+  Future<void> _syncNativePiPState() async {
+    if (!Platform.isAndroid) return;
+    final settings = AppSettingsService.instance;
+    try {
+      await _platformPlaybackChannel.invokeMethod<void>('updatePiPState', {
+        'enabled': settings.pictureInPictureEnabled,
+        'autoEnter': settings.autoEnterPictureInPicture,
+        'playing': _isVideoPlaying,
+        'width': _videoWidth,
+        'height': _videoHeight,
+      });
+    } on PlatformException {
+      // Older platform builds may not expose the enhanced PiP bridge yet.
+    }
+  }
+
+  Future<dynamic> _handlePlatformPlaybackCall(MethodCall call) async {
+    if (call.method != 'pipStateChanged') return;
+    final isInPiP = call.arguments == true;
+    if (mounted) setState(() => _isInNativePiP = isInPiP);
+    try {
+      await _controller.runJavaScript(
+        'if (window.__setNativePiPMode__) window.__setNativePiPMode__(${isInPiP ? 'true' : 'false'});',
+      );
+    } catch (_) {}
   }
 
   void _showPiPUnavailableMessage() {
@@ -807,8 +878,15 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                                 },
                               ),
                               onTap: () {
+                                final selected = QueueService.instance.takeAt(
+                                  index,
+                                );
                                 Navigator.of(context).pop();
-                                _controller.loadRequest(Uri.parse(item.url));
+                                if (selected != null) {
+                                  _controller.loadRequest(
+                                    Uri.parse(selected.url),
+                                  );
+                                }
                               },
                             );
                           },
@@ -895,7 +973,7 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                     iconColor: const Color(0xFF3EA6FF),
                     title: 'Background Play',
                     subtitle: 'Videos keep playing when you switch apps or lock your screen.',
-                    statusBadge: 'Active',
+                    statusBadge: 'Best effort',
                   ),
                   _buildFeatureTile(
                     icon: Icons.music_note_rounded,
@@ -943,8 +1021,8 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                     icon: Icons.high_quality_rounded,
                     iconColor: const Color(0xFFFF5252),
                     title: 'Enhanced 1080p',
-                    subtitle: 'High-bitrate 1080p profile active for crisper, sharper video.',
-                    statusBadge: 'Enhanced',
+                    subtitle: 'Requests the best available 1080p profile from the player.',
+                    statusBadge: 'Requested',
                   ),
                   _buildFeatureTile(
                     icon: Icons.queue_music_rounded,
@@ -1052,6 +1130,9 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
   }
 
   Widget _buildContinueWatchingBanner() {
+    if (!AppSettingsService.instance.continueWatchingEnabled) {
+      return const SizedBox.shrink();
+    }
     final lastCheckpoint = WatchHistoryService.instance.lastWatched;
     if (lastCheckpoint == null ||
         _activeVideoId != null ||
@@ -1170,7 +1251,9 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
                 onPressed: () {
-                  WatchHistoryService.instance.clearHistory();
+                  WatchHistoryService.instance.dismissCheckpoint(
+                    lastCheckpoint.videoId,
+                  );
                 },
               ),
             ],
@@ -1187,6 +1270,13 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
       return Scaffold(
         backgroundColor: Colors.black,
         body: _customFullscreenWidget!,
+      );
+    }
+
+    if (_isInNativePiP) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: _buildWebViewWidget(),
       );
     }
 
@@ -1415,7 +1505,20 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
         .push(MaterialPageRoute(builder: (context) => const DownloadsScreen()));
   }
 
-  /// Native 4-tab bottom navigation bar: [Home] [Shorts] [You] [Download]
+  Future<void> _openSettingsScreen() async {
+    if (!mounted) return;
+    setState(() => _currentNavIndex = 2);
+    await Navigator.of(context)
+        .push(MaterialPageRoute(builder: (context) => const SettingsScreen()));
+    if (!mounted) return;
+    setState(() {
+      _currentNavIndex = 0;
+      _isControllerInitialized = false;
+    });
+    await _controller.reload();
+  }
+
+  /// Native 4-tab bottom navigation bar: [Home] [Shorts] [Settings] [Download]
   Widget _buildNativeBottomNavBar() {
     return Container(
       decoration: const BoxDecoration(
@@ -1461,9 +1564,9 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                   label: 'Shorts',
                 ),
                 BottomNavigationBarItem(
-                  icon: Icon(Icons.account_circle_outlined, size: 24),
-                  activeIcon: Icon(Icons.account_circle_rounded, size: 24),
-                  label: 'You',
+                  icon: Icon(Icons.settings_outlined, size: 24),
+                  activeIcon: Icon(Icons.settings_rounded, size: 24),
+                  label: 'Settings',
                 ),
                 BottomNavigationBarItem(
                   icon: Icon(Icons.download_rounded, size: 24),
@@ -1479,6 +1582,10 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
   }
 
   void _onBottomNavTapped(int index) {
+    if (index == 2) {
+      _openSettingsScreen();
+      return;
+    }
     if (index == 3) {
       _openDownloadsScreen();
       return;
@@ -1500,11 +1607,6 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
         targetUrl = isDesktop
             ? 'https://www.youtube.com/shorts'
             : 'https://m.youtube.com/shorts';
-        break;
-      case 2:
-        targetUrl = isDesktop
-            ? 'https://www.youtube.com/feed/you'
-            : 'https://m.youtube.com/feed/you';
         break;
       default:
         targetUrl = isDesktop

@@ -38,12 +38,17 @@ class AppConstants {
     'youtubekids.com',
     'youtu.be',
     'yt.be',
+  ];
+
+  /// Exact Google pages needed for authentication and consent. Keeping these
+  /// exact prevents arbitrary Google-hosted/user-content pages from becoming
+  /// an escape hatch in the top-level navigation allowlist.
+  static const List<String> allowedExactHosts = [
     'google.com',
-    'gstatic.com',
-    'googlevideo.com',
-    'googleusercontent.com',
-    'ytimg.com',
-    'ggpht.com',
+    'www.google.com',
+    'accounts.google.com',
+    'myaccount.google.com',
+    'consent.google.com',
   ];
 }
 
@@ -51,6 +56,7 @@ class AppConstants {
 bool isHostAllowed(String? host) {
   if (host == null || host.trim().isEmpty) return false;
   final cleanHost = host.trim().toLowerCase();
+  if (AppConstants.allowedExactHosts.contains(cleanHost)) return true;
   for (final domain in AppConstants.allowedHostDomains) {
     if (cleanHost == domain || cleanHost.endsWith('.$domain')) {
       return true;
@@ -68,11 +74,10 @@ Uri switchYouTubeExperienceUri(Uri currentUri, {required bool toDesktop}) {
   if (currentHost == 'm.youtube.com' ||
       currentHost == 'www.youtube.com' ||
       currentHost == 'youtube.com') {
-    return currentUri.replace(
-      scheme: 'https',
-      host: targetHost,
-    );
+    return currentUri.replace(scheme: 'https', host: targetHost);
   }
 
-  return Uri.parse(toDesktop ? AppConstants.desktopUrl : AppConstants.mobileUrl);
+  return Uri.parse(
+    toDesktop ? AppConstants.desktopUrl : AppConstants.mobileUrl,
+  );
 }

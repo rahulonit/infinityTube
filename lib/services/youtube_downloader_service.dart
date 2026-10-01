@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
+
 import 'package:path_provider/path_provider.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
@@ -64,7 +66,8 @@ class YouTubeDownloaderService {
     }
 
     // 2. YouTube Shorts: /shorts/SHORT_ID
-    final shortsMatch = RegExp(r'/shorts/([a-zA-Z0-9_-]+)').firstMatch(uri.path);
+    final shortsMatch = RegExp(r'/shorts/([a-zA-Z0-9_-]+)')
+        .firstMatch(uri.path);
     if (shortsMatch != null) {
       return shortsMatch.group(1);
     }
@@ -75,7 +78,8 @@ class YouTubeDownloaderService {
     }
 
     // 4. Embeds & Live streams: /embed/VIDEO_ID or /live/VIDEO_ID
-    final embedMatch = RegExp(r'/(?:embed|live|v)/([a-zA-Z0-9_-]+)').firstMatch(uri.path);
+    final embedMatch = RegExp(r'/(?:embed|live|v)/([a-zA-Z0-9_-]+)')
+        .firstMatch(uri.path);
     if (embedMatch != null) {
       return embedMatch.group(1);
     }
@@ -109,9 +113,11 @@ class YouTubeDownloaderService {
         final isMp4 = stream.container.name.toLowerCase() == 'mp4';
         if (!muxedStreams.containsKey(key)) {
           muxedStreams[key] = stream;
-        } else if (isMp4 && muxedStreams[key]!.container.name.toLowerCase() != 'mp4') {
+        } else if (isMp4 &&
+            muxedStreams[key]!.container.name.toLowerCase() != 'mp4') {
           muxedStreams[key] = stream;
-        } else if (stream.bitrate.bitsPerSecond > muxedStreams[key]!.bitrate.bitsPerSecond) {
+        } else if (stream.bitrate.bitsPerSecond >
+            muxedStreams[key]!.bitrate.bitsPerSecond) {
           muxedStreams[key] = stream;
         }
       }
@@ -147,10 +153,13 @@ class YouTubeDownloaderService {
         final isMp4 = stream.container.name.toLowerCase() == 'mp4';
         if (!videoOnlyStreams.containsKey(key)) {
           videoOnlyStreams[key] = stream;
-        } else if (isMp4 && videoOnlyStreams[key]!.container.name.toLowerCase() != 'mp4') {
+        } else if (isMp4 &&
+            videoOnlyStreams[key]!.container.name.toLowerCase() != 'mp4') {
           videoOnlyStreams[key] = stream;
-        } else if (stream.container.name == videoOnlyStreams[key]!.container.name &&
-            stream.bitrate.bitsPerSecond > videoOnlyStreams[key]!.bitrate.bitsPerSecond) {
+        } else if (stream.container.name ==
+                videoOnlyStreams[key]!.container.name &&
+            stream.bitrate.bitsPerSecond >
+                videoOnlyStreams[key]!.bitrate.bitsPerSecond) {
           videoOnlyStreams[key] = stream;
         }
       }
@@ -159,10 +168,8 @@ class YouTubeDownloaderService {
         final totalBytes = stream.size.totalBytes;
         final sizeText = _formatBytes(totalBytes);
         final containerName = stream.container.name.toUpperCase();
-        final isEnhanced1080p = stream.qualityLabel.contains('1080p');
-        final label = isEnhanced1080p
-            ? '${stream.qualityLabel} $containerName (Enhanced 1080p)'
-            : '${stream.qualityLabel} $containerName (Video Only)';
+        final label =
+            '${stream.qualityLabel} $containerName (Video Only • No Audio)';
 
         videoOptions.add(
           DownloadQualityOption(
@@ -202,7 +209,9 @@ class YouTubeDownloaderService {
         final sizeText = _formatBytes(totalBytes);
         final kbps = (stream.bitrate.kiloBitsPerSecond).round();
         final isM4a = stream.container.name.toLowerCase() == 'mp4';
-        final formatName = isM4a ? 'M4A (MP4)' : stream.container.name.toUpperCase();
+        final formatName = isM4a
+            ? 'M4A (MP4)'
+            : stream.container.name.toUpperCase();
         final isHighQuality = kbps >= 256 || kbps >= 160;
         final label = isHighQuality
             ? '$kbps kbps High-Quality Audio'
@@ -379,16 +388,53 @@ class YouTubeDownloaderService {
           if (stat.size <= 0) continue; // Skip empty files
 
           final ext = entity.path.split('.').last.toLowerCase();
-          if (['mp4', 'webm', 'm4a', 'mp3', 'mkv', '3gp', '3gpp'].contains(ext)) {
+          if ([
+            'mp4',
+            'webm',
+            'm4a',
+            'mp3',
+            'mkv',
+            '3gp',
+            '3gpp',
+          ].contains(ext)) {
             final fileName = entity.uri.pathSegments.last;
             final baseName = fileName.substring(0, fileName.lastIndexOf('.'));
 
-            String title = baseName;
+            String title = baseName.replaceAll('_', ' ');
             String quality = ext.toUpperCase();
-            final lastUnderscore = baseName.lastIndexOf('_');
-            if (lastUnderscore > 0) {
-              title = baseName.substring(0, lastUnderscore).replaceAll('_', ' ');
-              quality = baseName.substring(lastUnderscore + 1).replaceAll('_', ' ');
+            String videoId = '';
+            String author = '';
+            String thumbnailUrl = '';
+            bool isAudioOnly = ext == 'm4a' || ext == 'mp3';
+
+            final metadataFile = File('${entity.path}.meta.json');
+            if (await metadataFile.exists()) {
+              try {
+                final metadata = jsonDecode(
+                  await metadataFile.readAsString(),
+                ) as Map<String, dynamic>;
+                title = metadata['title'] as String? ?? title;
+                quality = metadata['qualityLabel'] as String? ?? quality;
+                videoId = metadata['videoId'] as String? ?? '';
+                author = metadata['author'] as String? ?? '';
+                thumbnailUrl = metadata['thumbnailUrl'] as String? ?? '';
+                isAudioOnly = metadata['isAudioOnly'] as bool? ?? isAudioOnly;
+              } catch (_) {
+                // Keep filename-derived metadata for a damaged sidecar.
+              }
+            } else {
+              final qualityMatch = RegExp(
+                r'_(\d{2,4}p|\d{2,3}_kbps|audio)',
+                caseSensitive: false,
+              ).firstMatch(baseName);
+              if (qualityMatch != null) {
+                title = baseName
+                    .substring(0, qualityMatch.start)
+                    .replaceAll('_', ' ');
+                quality = baseName
+                    .substring(qualityMatch.start + 1)
+                    .replaceAll('_', ' ');
+              }
             }
 
             items.add(
@@ -399,6 +445,10 @@ class YouTubeDownloaderService {
                 format: ext == '3gpp' ? '3GP' : ext.toUpperCase(),
                 sizeBytes: stat.size,
                 modified: stat.modified,
+                videoId: videoId,
+                author: author,
+                thumbnailUrl: thumbnailUrl,
+                isAudioOnly: isAudioOnly,
               ),
             );
           }
@@ -417,10 +467,36 @@ class YouTubeDownloaderService {
     try {
       if (await file.exists()) {
         await file.delete();
+        final metadataFile = File('${file.path}.meta.json');
+        if (await metadataFile.exists()) {
+          await metadataFile.delete();
+        }
         return true;
       }
     } catch (_) {}
     return false;
+  }
+
+  static Future<void> writeDownloadMetadata({
+    required File mediaFile,
+    required String videoId,
+    required String title,
+    required String author,
+    required String thumbnailUrl,
+    required String qualityLabel,
+    required bool isAudioOnly,
+  }) async {
+    await File('${mediaFile.path}.meta.json').writeAsString(
+      jsonEncode({
+        'videoId': videoId,
+        'title': title,
+        'author': author,
+        'thumbnailUrl': thumbnailUrl,
+        'qualityLabel': qualityLabel,
+        'isAudioOnly': isAudioOnly,
+      }),
+      flush: true,
+    );
   }
 
   /// Clears all downloaded files.
@@ -468,6 +544,10 @@ class DownloadedMediaItem {
   final String format;
   final int sizeBytes;
   final DateTime modified;
+  final String videoId;
+  final String author;
+  final String thumbnailUrl;
+  final bool isAudioOnly;
 
   const DownloadedMediaItem({
     required this.file,
@@ -476,6 +556,10 @@ class DownloadedMediaItem {
     required this.format,
     required this.sizeBytes,
     required this.modified,
+    this.videoId = '',
+    this.author = '',
+    this.thumbnailUrl = '',
+    this.isAudioOnly = false,
   });
 
   String get sizeText => YouTubeDownloaderService.formatBytes(sizeBytes);

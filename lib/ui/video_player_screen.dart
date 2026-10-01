@@ -1,15 +1,14 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
+
 import '../services/youtube_downloader_service.dart';
 
 /// Full-featured offline media player for downloaded videos and audio files.
 class OfflineVideoPlayerScreen extends StatefulWidget {
-  const OfflineVideoPlayerScreen({
-    super.key,
-    required this.item,
-  });
+  const OfflineVideoPlayerScreen({super.key, required this.item});
 
   final DownloadedMediaItem item;
 
@@ -26,7 +25,10 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
 
   bool _showControls = true;
   Timer? _hideControlsTimer;
+  Timer? _seekFeedbackTimer;
   double _playbackSpeed = 1.0;
+  String? _seekFeedback;
+  Alignment _seekFeedbackAlignment = Alignment.center;
 
   @override
   void initState() {
@@ -36,6 +38,12 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
 
   Future<void> _initializePlayer() async {
     try {
+      final previousController = _controller;
+      if (previousController != null) {
+        previousController.removeListener(_onPlayerStateChanged);
+        await previousController.dispose();
+        _controller = null;
+      }
       final file = widget.item.file;
       if (!await file.exists() || await file.length() == 0) {
         if (mounted) {
@@ -55,7 +63,9 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
         if (mounted) {
           setState(() {
             _hasError = true;
-            _errorMessage = _controller!.value.errorDescription ?? 'Codec error: Unable to decode file.';
+            _errorMessage =
+                _controller!.value.errorDescription ??
+                'Codec error: Unable to decode file.';
           });
         }
         return;
@@ -84,7 +94,9 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
     if (_controller?.value.hasError == true && !_hasError) {
       setState(() {
         _hasError = true;
-        _errorMessage = _controller?.value.errorDescription ?? 'Playback error encountered.';
+        _errorMessage =
+            _controller?.value.errorDescription ??
+            'Playback error encountered.';
       });
     } else {
       setState(() {});
@@ -135,9 +147,19 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
     final clamped = target < Duration.zero
         ? Duration.zero
         : (target > _controller!.value.duration
-            ? _controller!.value.duration
-            : target);
+              ? _controller!.value.duration
+              : target);
     _controller!.seekTo(clamped);
+    _seekFeedbackTimer?.cancel();
+    setState(() {
+      _seekFeedback = seconds < 0 ? '−10s' : '+10s';
+      _seekFeedbackAlignment = seconds < 0
+          ? const Alignment(-0.62, 0)
+          : const Alignment(0.62, 0);
+    });
+    _seekFeedbackTimer = Timer(const Duration(milliseconds: 650), () {
+      if (mounted) setState(() => _seekFeedback = null);
+    });
     _startHideControlsTimer();
   }
 
@@ -168,6 +190,7 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
   @override
   void dispose() {
     _hideControlsTimer?.cancel();
+    _seekFeedbackTimer?.cancel();
     _controller?.removeListener(_onPlayerStateChanged);
     _controller?.dispose();
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
@@ -176,10 +199,14 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isAudioOnly = widget.item.format == 'MP3' ||
+    final isAudioOnly =
+        widget.item.isAudioOnly ||
+        widget.item.format == 'MP3' ||
         widget.item.format == 'M4A' ||
         widget.item.quality.toLowerCase().contains('audio') ||
-        (_isInitialized && _controller != null && _controller!.value.size == Size.zero);
+        (_isInitialized &&
+            _controller != null &&
+            _controller!.value.size == Size.zero);
 
     return PopScope(
       canPop: true,
@@ -198,7 +225,9 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
               else if (!_isInitialized)
                 const Center(
                   child: CircularProgressIndicator(
-                    valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFFF0000)),
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      Color(0xFFFF0000),
+                    ),
                   ),
                 )
               else if (isAudioOnly)
@@ -228,6 +257,31 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
                 child: const SizedBox.expand(),
               ),
 
+              if (_seekFeedback != null)
+                Align(
+                  alignment: _seekFeedbackAlignment,
+                  child: IgnorePointer(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.72),
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                      child: Text(
+                        _seekFeedback!,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
               // 3. Top Controls Bar
               AnimatedOpacity(
                 opacity: _showControls ? 1.0 : 0.0,
@@ -249,12 +303,16 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
                         ),
                       ),
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
                       child: Row(
                         children: [
                           IconButton(
-                            icon: const Icon(Icons.arrow_back_rounded,
-                                color: Colors.white),
+                            icon: const Icon(
+                              Icons.arrow_back_rounded,
+                              color: Colors.white,
+                            ),
                             onPressed: () => Navigator.of(context).pop(),
                           ),
                           const SizedBox(width: 8),
@@ -278,7 +336,9 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
                                   children: [
                                     Container(
                                       padding: const EdgeInsets.symmetric(
-                                          horizontal: 6, vertical: 1.5),
+                                        horizontal: 6,
+                                        vertical: 1.5,
+                                      ),
                                       decoration: BoxDecoration(
                                         color: const Color(0xFFFF0000)
                                             .withValues(alpha: 0.2),
@@ -310,7 +370,9 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
                             onPressed: _cyclePlaybackSpeed,
                             style: TextButton.styleFrom(
                               foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
                             ),
                             child: Text(
                               '${_playbackSpeed}x',
@@ -339,8 +401,10 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
                       // -10s
                       IconButton(
                         iconSize: 42,
-                        icon: const Icon(Icons.replay_10_rounded,
-                            color: Colors.white),
+                        icon: const Icon(
+                          Icons.replay_10_rounded,
+                          color: Colors.white,
+                        ),
                         onPressed: () => _seekRelative(-10),
                       ),
                       const SizedBox(width: 36),
@@ -367,10 +431,10 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
                             _controller?.value.isPlaying == true
                                 ? Icons.pause_rounded
                                 : (_controller != null &&
-                                        _controller!.value.position >=
-                                            _controller!.value.duration
-                                    ? Icons.replay_rounded
-                                    : Icons.play_arrow_rounded),
+                                          _controller!.value.position >=
+                                              _controller!.value.duration
+                                      ? Icons.replay_rounded
+                                      : Icons.play_arrow_rounded),
                             color: Colors.white,
                           ),
                           onPressed: _togglePlayPause,
@@ -381,8 +445,10 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
                       // +10s
                       IconButton(
                         iconSize: 42,
-                        icon: const Icon(Icons.forward_10_rounded,
-                            color: Colors.white),
+                        icon: const Icon(
+                          Icons.forward_10_rounded,
+                          color: Colors.white,
+                        ),
                         onPressed: () => _seekRelative(10),
                       ),
                     ],
@@ -411,7 +477,9 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
                         ),
                       ),
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 12),
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -421,26 +489,40 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
                               inactiveTrackColor: Colors.white24,
                               thumbColor: const Color(0xFFFF0000),
                               thumbShape: const RoundSliderThumbShape(
-                                  enabledThumbRadius: 6),
+                                enabledThumbRadius: 6,
+                              ),
                               overlayColor: const Color(0xFFFF0000)
                                   .withValues(alpha: 0.2),
                               trackHeight: 3.5,
                             ),
                             child: Slider(
-                              value: _controller != null &&
-                                      _controller!.value.duration.inMilliseconds >
+                              value:
+                                  _controller != null &&
+                                      _controller!
+                                              .value
+                                              .duration
+                                              .inMilliseconds >
                                           0
-                                  ? (_controller!.value.position.inMilliseconds /
-                                          _controller!
-                                              .value.duration.inMilliseconds)
-                                      .clamp(0.0, 1.0)
+                                  ? (_controller!
+                                                .value
+                                                .position
+                                                .inMilliseconds /
+                                            _controller!
+                                                .value
+                                                .duration
+                                                .inMilliseconds)
+                                        .clamp(0.0, 1.0)
                                   : 0.0,
                               onChanged: (value) {
                                 if (_controller != null) {
-                                  final duration =
-                                      _controller!.value.duration.inMilliseconds;
+                                  final duration = _controller!
+                                      .value
+                                      .duration
+                                      .inMilliseconds;
                                   final seekMs = (value * duration).round();
-                                  _controller!.seekTo(Duration(milliseconds: seekMs));
+                                  _controller!.seekTo(
+                                    Duration(milliseconds: seekMs),
+                                  );
                                 }
                               },
                             ),
@@ -453,7 +535,8 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
                                 Text(
                                   _controller != null
                                       ? _formatDuration(
-                                          _controller!.value.position)
+                                          _controller!.value.position,
+                                        )
                                       : '00:00',
                                   style: const TextStyle(
                                     color: Colors.white70,
@@ -464,7 +547,8 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
                                 Text(
                                   _controller != null
                                       ? _formatDuration(
-                                          _controller!.value.duration)
+                                          _controller!.value.duration,
+                                        )
                                       : '00:00',
                                   style: const TextStyle(
                                     color: Colors.white70,
@@ -532,10 +616,7 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
           const SizedBox(height: 8),
           Text(
             'Offline Audio Track • ${widget.item.quality}',
-            style: TextStyle(
-              color: Colors.grey.shade400,
-              fontSize: 13,
-            ),
+            style: TextStyle(color: Colors.grey.shade400, fontSize: 13),
           ),
         ],
       ),
@@ -567,10 +648,7 @@ class _OfflineVideoPlayerScreenState extends State<OfflineVideoPlayerScreen> {
             Text(
               _errorMessage ?? 'Unable to play this video.',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.grey.shade400,
-                fontSize: 14,
-              ),
+              style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
             ),
             const SizedBox(height: 24),
             FilledButton(

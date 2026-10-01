@@ -75,10 +75,7 @@ class _YouTubeLoadingSkeletonState extends State<YouTubeLoadingSkeleton>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // 16:9 Thumbnail
-        AspectRatio(
-          aspectRatio: 16 / 9,
-          child: _buildShimmerItem(radius: 12),
-        ),
+        AspectRatio(aspectRatio: 16 / 9, child: _buildShimmerItem(radius: 12)),
         const SizedBox(height: 12),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,

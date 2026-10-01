@@ -1,4 +1,5 @@
 import 'dart:ui';
+
 import 'package:flutter/material.dart';
 
 /// A sleek frosted-glass floating control capsule for the YouTube WebView shell.
@@ -88,7 +89,10 @@ class _FloatingControlPillState extends State<FloatingControlPill> {
                     onTap: widget.onShieldPressed,
                     borderRadius: BorderRadius.circular(20),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 6,
+                      ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -105,7 +109,8 @@ class _FloatingControlPillState extends State<FloatingControlPill> {
                                 vertical: 2,
                               ),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF00E676).withValues(alpha: 0.2),
+                                color: const Color(0xFF00E676)
+                                    .withValues(alpha: 0.2),
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: Text(
@@ -137,7 +142,9 @@ class _FloatingControlPillState extends State<FloatingControlPill> {
                     _buildIconButton(
                       icon: Icons.arrow_forward_ios_rounded,
                       tooltip: 'Forward',
-                      onPressed: widget.canGoForward ? widget.onForwardPressed : null,
+                      onPressed: widget.canGoForward
+                          ? widget.onForwardPressed
+                          : null,
                     ),
 
                     // 4. Home button
@@ -255,7 +262,10 @@ class _FloatingControlPillState extends State<FloatingControlPill> {
                     },
                     borderRadius: BorderRadius.circular(20),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 8,
+                      ),
                       child: Icon(
                         _isExpanded
                             ? Icons.chevron_left_rounded

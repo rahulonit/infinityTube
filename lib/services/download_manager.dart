@@ -1,9 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
+import 'app_settings_service.dart';
+import 'storage_info_service.dart';
 import 'youtube_downloader_service.dart';
 
 /// Status of an individual media download task.
@@ -62,7 +66,9 @@ class DownloadTask {
   HttpClient? _activeClient;
   StreamSubscription<List<int>>? _streamSubscription;
   IOSink? _fileSink;
+  Completer<void>? _downloadCompleter;
   bool _isDisposed = false;
+  bool pausedForConnectivity = false;
 
   bool get isDownloading => status == DownloadStatus.downloading;
   bool get isPaused => status == DownloadStatus.paused;
@@ -74,7 +80,10 @@ class DownloadTask {
 /// Supports pausing, resuming with HTTP Range headers, and auto-refreshing expired links.
 class DownloadManager extends ChangeNotifier {
   static final DownloadManager instance = DownloadManager._internal();
-  DownloadManager._internal();
+  DownloadManager._internal() {
+    _restorePendingTasks();
+    Connectivity().onConnectivityChanged.listen(_handleConnectivityChanged);
+  }
 
   final Map<String, DownloadTask> _tasks = {};
 
@@ -102,6 +111,14 @@ class DownloadManager extends ChangeNotifier {
   /// Removes a task from the manager.
   void removeTask(String id) {
     _tasks.remove(id);
+    notifyListeners();
+  }
+
+  void removeCompletedTaskForFile(String path) {
+    _tasks.removeWhere(
+      (_, task) => task.isCompleted && task.targetFile.path == path,
+    );
+    notifyListeners();
   }
 
   /// Starts or queues a download for the given video and quality option.
@@ -114,15 +131,38 @@ class DownloadManager extends ChangeNotifier {
     required DownloadQualityOption qualityOption,
     bool isShort = false,
   }) async {
+    final appSettings = AppSettingsService.instance;
+    final connectivity = await Connectivity().checkConnectivity();
+    if (!_connectionAllowed(connectivity)) {
+      throw StateError(
+        appSettings.downloadsWifiOnly
+            ? 'Connect to Wi-Fi to start this download.'
+            : 'Connect to the internet to start this download.',
+      );
+    }
+
+    final storage = await StorageInfoService.getStorageInfo();
+    final requiredBytes =
+        qualityOption.totalBytes + (appSettings.storageReserveMb * 1024 * 1024);
+    if (storage != null && storage.freeBytes < requiredBytes) {
+      throw FileSystemException(
+        'Not enough free storage. Keep at least ${appSettings.storageReserveMb} MB available.',
+      );
+    }
+
     final taskId = '${videoId}_${qualityOption.id}';
 
     // If already exists and is downloading or paused, return existing task
     if (_tasks.containsKey(taskId)) {
       final existing = _tasks[taskId]!;
-      if (existing.isPaused || existing.isFailed) {
-        await resumeDownload(taskId);
+      if (existing.isCompleted && !await existing.targetFile.exists()) {
+        _tasks.remove(taskId);
+      } else {
+        if (existing.isPaused || existing.isFailed) {
+          await resumeDownload(taskId);
+        }
+        return existing;
       }
-      return existing;
     }
 
     final dir = await YouTubeDownloaderService.getSaveDirectory();
@@ -151,7 +191,9 @@ class DownloadManager extends ChangeNotifier {
       ext = '3gp';
     }
 
-    final targetFile = File('${dir.path}/${safeTitle}_$safeQuality.$ext');
+    final targetFile = File(
+      '${dir.path}/${safeTitle}__${videoId}__$safeQuality.$ext',
+    );
     final tempFile = File('${targetFile.path}.download');
 
     final task = DownloadTask(
@@ -173,6 +215,7 @@ class DownloadManager extends ChangeNotifier {
     );
 
     _tasks[taskId] = task;
+    await _persistTask(task);
     notifyListeners();
 
     _executeDownload(task);
@@ -180,11 +223,15 @@ class DownloadManager extends ChangeNotifier {
   }
 
   /// Pauses an active download, preserving downloaded bytes in temp file.
-  Future<void> pauseDownload(String taskId) async {
+  Future<void> pauseDownload(
+    String taskId, {
+    bool dueToConnectivity = false,
+  }) async {
     final task = _tasks[taskId];
     if (task == null || task.status != DownloadStatus.downloading) return;
 
     task.status = DownloadStatus.paused;
+    task.pausedForConnectivity = dueToConnectivity;
     task.progressText = 'Paused (${(task.progress * 100).round()}%)';
 
     try {
@@ -203,6 +250,10 @@ class DownloadManager extends ChangeNotifier {
       task._activeClient = null;
     } catch (_) {}
 
+    if (task._downloadCompleter?.isCompleted == false) {
+      task._downloadCompleter!.complete();
+    }
+
     notifyListeners();
   }
 
@@ -213,6 +264,7 @@ class DownloadManager extends ChangeNotifier {
     if (task.status == DownloadStatus.downloading) return;
 
     task.status = DownloadStatus.downloading;
+    task.pausedForConnectivity = false;
     task.errorMessage = null;
     task.progressText = 'Resuming...';
     task.bytesPerSecond = 0;
@@ -221,6 +273,38 @@ class DownloadManager extends ChangeNotifier {
     notifyListeners();
 
     _executeDownload(task);
+  }
+
+  bool _connectionAllowed(List<ConnectivityResult> connectivity) {
+    if (connectivity.contains(ConnectivityResult.none)) return false;
+    if (!AppSettingsService.instance.downloadsWifiOnly) return true;
+    return connectivity.contains(ConnectivityResult.wifi) ||
+        connectivity.contains(ConnectivityResult.ethernet);
+  }
+
+  Future<void> _handleConnectivityChanged(
+    List<ConnectivityResult> connectivity,
+  ) async {
+    final allowed = _connectionAllowed(connectivity);
+    if (!allowed) {
+      final activeIds = _tasks.values
+          .where((task) => task.isDownloading)
+          .map((task) => task.id)
+          .toList();
+      for (final id in activeIds) {
+        await pauseDownload(id, dueToConnectivity: true);
+      }
+      return;
+    }
+
+    if (!AppSettingsService.instance.autoResumeDownloads) return;
+    final resumableIds = _tasks.values
+        .where((task) => task.isPaused && task.pausedForConnectivity)
+        .map((task) => task.id)
+        .toList();
+    for (final id in resumableIds) {
+      await resumeDownload(id);
+    }
   }
 
   /// Cancels a download task and deletes the temporary file.
@@ -243,18 +327,26 @@ class DownloadManager extends ChangeNotifier {
       task._activeClient?.close(force: true);
     } catch (_) {}
 
+    if (task._downloadCompleter?.isCompleted == false) {
+      task._downloadCompleter!.complete();
+    }
+
     if (await task.tempFile.exists()) {
       try {
         await task.tempFile.delete();
       } catch (_) {}
     }
+    await _deleteTaskDescriptor(task);
 
     _tasks.remove(taskId);
     notifyListeners();
   }
 
   /// Core download worker handling chunk streaming, range headers, and expired link renewal.
-  Future<void> _executeDownload(DownloadTask task) async {
+  Future<void> _executeDownload(
+    DownloadTask task, {
+    int renewalAttempts = 0,
+  }) async {
     if (task._isDisposed || task.status != DownloadStatus.downloading) return;
 
     final client = HttpClient();
@@ -290,9 +382,16 @@ class DownloadManager extends ChangeNotifier {
       if (response.statusCode == HttpStatus.forbidden ||
           response.statusCode == HttpStatus.gone ||
           response.statusCode == HttpStatus.notFound) {
-        debugPrint(
-          '[DownloadManager] Stream URL expired for ${task.videoId}. Refreshing stream manifest...',
-        );
+        if (renewalAttempts >= 2) {
+          throw const HttpException(
+            'Stream URL expired repeatedly. Please retry the download.',
+          );
+        }
+        if (AppSettingsService.instance.diagnosticLoggingEnabled) {
+          debugPrint(
+            '[DownloadManager] Stream URL expired for ${task.videoId}. Refreshing stream manifest...',
+          );
+        }
         final yt = YoutubeExplode();
         try {
           final manifest = await yt.videos.streamsClient.getManifest(
@@ -311,7 +410,7 @@ class DownloadManager extends ChangeNotifier {
           yt.close();
           // Seamlessly re-execute with fresh link from current offset
           if (task.status == DownloadStatus.downloading && !task._isDisposed) {
-            await _executeDownload(task);
+            await _executeDownload(task, renewalAttempts: renewalAttempts + 1);
             return;
           }
           return;
@@ -336,10 +435,17 @@ class DownloadManager extends ChangeNotifier {
           ? FileMode.append
           : FileMode.write;
 
+      if (existingBytes > 0 && response.statusCode == HttpStatus.ok) {
+        task.receivedBytes = 0;
+        task.progress = 0;
+        task._lastSpeedSampleBytes = 0;
+      }
+
       final sink = task.tempFile.openWrite(mode: openMode);
       task._fileSink = sink;
 
       final completer = Completer<void>();
+      task._downloadCompleter = completer;
 
       task._streamSubscription = response.listen(
         (chunk) {
@@ -430,6 +536,20 @@ class DownloadManager extends ChangeNotifier {
       task.progress = 1.0;
       task.bytesPerSecond = 0;
       task.progressText = 'Completed';
+      try {
+        await YouTubeDownloaderService.writeDownloadMetadata(
+          mediaFile: task.targetFile,
+          videoId: task.videoId,
+          title: task.title,
+          author: task.author,
+          thumbnailUrl: task.thumbnailUrl,
+          qualityLabel: task.qualityLabel,
+          isAudioOnly: task.isAudioOnly,
+        );
+      } catch (_) {
+        // The media file is complete even if supplemental metadata cannot save.
+      }
+      await _deleteTaskDescriptor(task);
       notifyListeners();
     } catch (e) {
       task.status = DownloadStatus.failed;
@@ -444,5 +564,103 @@ class DownloadManager extends ChangeNotifier {
       return '${(bytesPerSecond / (1024 * 1024)).toStringAsFixed(1)} MB/s';
     }
     return '${(bytesPerSecond / 1024).toStringAsFixed(0)} KB/s';
+  }
+
+  File _descriptorFile(DownloadTask task) =>
+      File('${task.tempFile.path}.task.json');
+
+  Future<void> _persistTask(DownloadTask task) async {
+    try {
+      await _descriptorFile(task).writeAsString(
+        jsonEncode({
+          'id': task.id,
+          'videoId': task.videoId,
+          'title': task.title,
+          'author': task.author,
+          'durationText': task.durationText,
+          'thumbnailUrl': task.thumbnailUrl,
+          'qualityLabel': task.qualityLabel,
+          'format': task.format,
+          'isAudioOnly': task.isAudioOnly,
+          'isShort': task.isShort,
+          'streamTag': task.streamInfo.tag,
+          'targetPath': task.targetFile.path,
+          'tempPath': task.tempFile.path,
+          'totalBytes': task.totalBytes,
+        }),
+        flush: true,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _deleteTaskDescriptor(DownloadTask task) async {
+    try {
+      final file = _descriptorFile(task);
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+
+  Future<void> _restorePendingTasks() async {
+    try {
+      final dir = await YouTubeDownloaderService.getSaveDirectory();
+      final descriptors = dir.listSync().whereType<File>().where(
+        (file) => file.path.endsWith('.download.task.json'),
+      );
+
+      for (final descriptor in descriptors) {
+        try {
+          final data = jsonDecode(
+            await descriptor.readAsString(),
+          ) as Map<String, dynamic>;
+          final videoId = data['videoId'] as String? ?? '';
+          if (videoId.isEmpty) continue;
+
+          final yt = YoutubeExplode();
+          late final StreamInfo stream;
+          try {
+            final manifest = await yt.videos.streamsClient.getManifest(videoId);
+            final tag = data['streamTag'] as int?;
+            stream = manifest.streams.firstWhere(
+              (candidate) => candidate.tag == tag,
+              orElse: () => throw StateError('Original stream is unavailable'),
+            );
+          } finally {
+            yt.close();
+          }
+
+          final tempFile = File(data['tempPath'] as String);
+          final received = await tempFile.exists()
+              ? await tempFile.length()
+              : 0;
+          final total = data['totalBytes'] as int? ?? stream.size.totalBytes;
+          final task = DownloadTask(
+            id: data['id'] as String,
+            videoId: videoId,
+            title: data['title'] as String? ?? 'Recovered download',
+            author: data['author'] as String? ?? '',
+            durationText: data['durationText'] as String? ?? '',
+            thumbnailUrl: data['thumbnailUrl'] as String? ?? '',
+            qualityLabel: data['qualityLabel'] as String? ?? '',
+            format:
+                data['format'] as String? ??
+                stream.container.name.toUpperCase(),
+            isAudioOnly: data['isAudioOnly'] as bool? ?? false,
+            isShort: data['isShort'] as bool? ?? false,
+            streamInfo: stream,
+            targetFile: File(data['targetPath'] as String),
+            tempFile: tempFile,
+            totalBytes: total,
+            status: DownloadStatus.paused,
+            receivedBytes: received,
+            progress: total > 0 ? (received / total).clamp(0.0, 1.0) : 0,
+            progressText: 'Recovered • Tap resume',
+          );
+          _tasks[task.id] = task;
+        } catch (_) {
+          // Keep the descriptor for a future launch if recovery was offline.
+        }
+      }
+      notifyListeners();
+    } catch (_) {}
   }
 }

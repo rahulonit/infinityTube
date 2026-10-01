@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
+
 import 'youtube_downloader_service.dart';
 
 /// Represents a video playback checkpoint for the "Continue Watching" feature.
@@ -30,12 +32,12 @@ class VideoCheckpoint {
   }
 
   Map<String, dynamic> toJson() => {
-        'videoId': videoId,
-        'title': title,
-        'positionSeconds': positionSeconds,
-        'durationSeconds': durationSeconds,
-        'lastWatched': lastWatched.toIso8601String(),
-      };
+    'videoId': videoId,
+    'title': title,
+    'positionSeconds': positionSeconds,
+    'durationSeconds': durationSeconds,
+    'lastWatched': lastWatched.toIso8601String(),
+  };
 
   factory VideoCheckpoint.fromJson(Map<String, dynamic> json) =>
       VideoCheckpoint(
@@ -43,7 +45,8 @@ class VideoCheckpoint {
         title: json['title'] as String? ?? '',
         positionSeconds: json['positionSeconds'] as int? ?? 0,
         durationSeconds: json['durationSeconds'] as int? ?? 0,
-        lastWatched: DateTime.tryParse(json['lastWatched'] as String? ?? '') ??
+        lastWatched:
+            DateTime.tryParse(json['lastWatched'] as String? ?? '') ??
             DateTime.now(),
       );
 }
@@ -58,8 +61,9 @@ class WatchHistoryService extends ChangeNotifier {
   final Map<String, VideoCheckpoint> _history = {};
   VideoCheckpoint? _lastCheckpoint;
 
-  List<VideoCheckpoint> get history => _history.values.toList()
-    ..sort((a, b) => b.lastWatched.compareTo(a.lastWatched));
+  List<VideoCheckpoint> get history =>
+      _history.values.toList()
+        ..sort((a, b) => b.lastWatched.compareTo(a.lastWatched));
 
   VideoCheckpoint? get lastWatched => _lastCheckpoint;
 
@@ -103,7 +107,8 @@ class WatchHistoryService extends ChangeNotifier {
     if (positionSeconds < 5 || positionSeconds >= durationSeconds * 0.95) {
       if (positionSeconds >= durationSeconds * 0.95) {
         _history.remove(videoId);
-        _saveToDisk();
+        _lastCheckpoint = history.isEmpty ? null : history.first;
+        await _saveToDisk();
         notifyListeners();
       }
       return;
@@ -141,5 +146,12 @@ class WatchHistoryService extends ChangeNotifier {
         await file.delete();
       }
     } catch (_) {}
+  }
+
+  Future<void> dismissCheckpoint(String videoId) async {
+    _history.remove(videoId);
+    _lastCheckpoint = history.isEmpty ? null : history.first;
+    notifyListeners();
+    await _saveToDisk();
   }
 }
