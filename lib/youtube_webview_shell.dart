@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -42,6 +44,10 @@ class YouTubeWebViewShell extends StatefulWidget {
 }
 
 class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
+  static const MethodChannel _platformPlaybackChannel = MethodChannel(
+    'infinitytube/platform_playback',
+  );
+
   late final WebViewController _controller;
 
   bool? _isDesktopMode;
@@ -101,7 +107,9 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
     _controller = WebViewController.fromPlatformCreationParams(
       params,
       onPermissionRequest: (WebViewPermissionRequest request) {
-        debugPrint('[Security] Denied permission request for: ${request.types}');
+        debugPrint(
+          '[Security] Denied permission request for: ${request.types}',
+        );
         request.deny();
       },
     );
@@ -154,15 +162,17 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
 
     // 4. Platform specific customizations (DOM storage, inline media playback, custom view)
     if (_controller.platform is AndroidWebViewController) {
-      final androidController = _controller.platform as AndroidWebViewController;
+      final androidController =
+          _controller.platform as AndroidWebViewController;
       androidController.setMediaPlaybackRequiresUserGesture(false);
       androidController.setCustomWidgetCallbacks(
-        onShowCustomWidget: (Widget customWidget, void Function() onCustomWidgetHidden) {
-          setState(() {
-            _customFullscreenWidget = customWidget;
-          });
-          _handleFullscreenChange(true);
-        },
+        onShowCustomWidget:
+            (Widget customWidget, void Function() onCustomWidgetHidden) {
+              setState(() {
+                _customFullscreenWidget = customWidget;
+              });
+              _handleFullscreenChange(true);
+            },
         onHideCustomWidget: () {
           setState(() {
             _customFullscreenWidget = null;
@@ -208,7 +218,9 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
           _updateActiveVideoState(url);
         },
         onWebResourceError: (WebResourceError error) {
-          debugPrint('[WebView Error] Code: ${error.errorCode}, Type: ${error.errorType}, Desc: ${error.description}, URL: ${error.url}, isMainFrame: ${error.isForMainFrame}');
+          debugPrint(
+            '[WebView Error] Code: ${error.errorCode}, Type: ${error.errorType}, Desc: ${error.description}, URL: ${error.url}, isMainFrame: ${error.isForMainFrame}',
+          );
           if (error.isForMainFrame ?? true) {
             if (!mounted) return;
             setState(() {
@@ -234,7 +246,9 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
             return NavigationDecision.navigate;
           }
 
-          debugPrint('[Security] Blocked top-level navigation to unapproved host: ${uri.host}');
+          debugPrint(
+            '[Security] Blocked top-level navigation to unapproved host: ${uri.host}',
+          );
           _showExternalLinkBlockedNotice(request.url);
           return NavigationDecision.prevent;
         },
@@ -268,9 +282,13 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
     int? newIndex;
     if (YouTubeDownloaderService.isShortsUrl(url)) {
       newIndex = 1;
-    } else if (url.contains('/feed/you') || url.contains('/feed/library') || url.contains('/account')) {
+    } else if (url.contains('/feed/you') ||
+        url.contains('/feed/library') ||
+        url.contains('/account')) {
       newIndex = 2;
-    } else if (url.endsWith('youtube.com/') || url.endsWith('youtube.com') || url.contains('/?app=')) {
+    } else if (url.endsWith('youtube.com/') ||
+        url.endsWith('youtube.com') ||
+        url.contains('/?app=')) {
       newIndex = 0;
     }
     if (newIndex != null && newIndex != _currentNavIndex) {
@@ -283,7 +301,9 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
   Future<void> _handleDownloadPressed() async {
     String? currentUrl = await _controller.currentUrl();
     try {
-      final jsUrl = await _controller.runJavaScriptReturningResult('window.location.href');
+      final jsUrl = await _controller.runJavaScriptReturningResult(
+        'window.location.href',
+      );
       final jsUrlStr = jsUrl.toString().replaceAll('"', '').trim();
       if (jsUrlStr.isNotEmpty && jsUrlStr.startsWith('http')) {
         currentUrl = jsUrlStr;
@@ -310,11 +330,7 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
     }
 
     if (!mounted) return;
-    DownloadBottomSheet.show(
-      context,
-      videoId: videoId,
-      isShort: isShort,
-    );
+    DownloadBottomSheet.show(context, videoId: videoId, isShort: isShort);
   }
 
   void _handleFullscreenChange(bool isEntering) {
@@ -344,7 +360,8 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
 
   void _checkSignInUrl(String url) {
     final uri = Uri.tryParse(url);
-    final isSignIn = uri != null &&
+    final isSignIn =
+        uri != null &&
         (uri.host.contains('accounts.google.com') ||
             uri.path.contains('signin') ||
             uri.path.contains('ServiceLogin'));
@@ -394,18 +411,23 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
     if (currentUrlStr != null && currentUrlStr.isNotEmpty) {
       final currentUri = Uri.tryParse(currentUrlStr);
       if (currentUri != null) {
-        targetUri = switchYouTubeExperienceUri(currentUri, toDesktop: isDesktop);
+        targetUri = switchYouTubeExperienceUri(
+          currentUri,
+          toDesktop: isDesktop,
+        );
       } else {
-        targetUri = Uri.parse(isDesktop ? AppConstants.desktopUrl : AppConstants.mobileUrl);
+        targetUri = Uri.parse(
+          isDesktop ? AppConstants.desktopUrl : AppConstants.mobileUrl,
+        );
       }
     } else {
-      targetUri = Uri.parse(isDesktop ? AppConstants.desktopUrl : AppConstants.mobileUrl);
+      targetUri = Uri.parse(
+        isDesktop ? AppConstants.desktopUrl : AppConstants.mobileUrl,
+      );
     }
 
     await _controller.loadRequest(targetUri);
   }
-
-
 
   Future<void> _retry() async {
     setState(() {
@@ -444,8 +466,6 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
     }
   }
 
-
-
   void _showExternalLinkBlockedNotice(String blockedUrl) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -468,7 +488,8 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
       final type = data['type'] as String?;
       if (type == 'progress') {
         final url = data['url'] as String?;
-        final videoId = YouTubeDownloaderService.extractVideoId(url) ?? _activeVideoId;
+        final videoId =
+            YouTubeDownloaderService.extractVideoId(url) ?? _activeVideoId;
         final title = data['title'] as String? ?? '';
         final position = data['position'] as int? ?? 0;
         final duration = data['duration'] as int? ?? 0;
@@ -502,21 +523,63 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
   }
 
   Future<void> _handlePiP() async {
+    var webPiPSupported = false;
     try {
-      await _controller.runJavaScript('if (window.__togglePiP__) window.__togglePiP__();');
+      final result = await _controller.runJavaScriptReturningResult(
+        "typeof window.__togglePiP__ === 'function' ? 'supported' : 'unsupported'",
+      );
+      webPiPSupported =
+          result.toString().contains('supported') &&
+          !result.toString().contains('unsupported');
+      if (webPiPSupported) {
+        await _controller.runJavaScript(
+          'if (window.__togglePiP__) window.__togglePiP__();',
+        );
+      }
     } catch (_) {}
+
+    // Chromium WebView commonly omits the page-level Picture-in-Picture API.
+    // Fall back to Android's native activity PiP so the playing WebView itself
+    // remains visible above other applications.
+    if (Platform.isAndroid && !webPiPSupported) {
+      try {
+        final entered = await _platformPlaybackChannel.invokeMethod<bool>(
+          'enterPiP',
+        );
+        if (entered != true && mounted) {
+          _showPiPUnavailableMessage();
+        }
+      } on PlatformException {
+        if (mounted) _showPiPUnavailableMessage();
+      }
+    }
+  }
+
+  void _showPiPUnavailableMessage() {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Picture-in-Picture is unavailable on this device.'),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: Color(0xFF282828),
+      ),
+    );
   }
 
   Future<void> _handleJumpAhead() async {
     try {
-      await _controller.runJavaScript('if (window.__jumpAhead__) window.__jumpAhead__();');
+      await _controller.runJavaScript(
+        'if (window.__jumpAhead__) window.__jumpAhead__();',
+      );
     } catch (_) {}
   }
 
   Future<void> _handleMusicToggle() async {
     final currentUrl = await _controller.currentUrl() ?? '';
     if (currentUrl.contains('music.youtube.com')) {
-      final target = (_isDesktopMode ?? false) ? AppConstants.desktopUrl : AppConstants.mobileUrl;
+      final target = (_isDesktopMode ?? false)
+          ? AppConstants.desktopUrl
+          : AppConstants.mobileUrl;
       await _controller.loadRequest(Uri.parse(target));
     } else {
       await _controller.loadRequest(Uri.parse(AppConstants.musicUrl));
@@ -526,7 +589,9 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
   Future<void> _handleKidsToggle() async {
     final currentUrl = await _controller.currentUrl() ?? '';
     if (currentUrl.contains('youtubekids.com')) {
-      final target = (_isDesktopMode ?? false) ? AppConstants.desktopUrl : AppConstants.mobileUrl;
+      final target = (_isDesktopMode ?? false)
+          ? AppConstants.desktopUrl
+          : AppConstants.mobileUrl;
       await _controller.loadRequest(Uri.parse(target));
     } else {
       await _controller.loadRequest(Uri.parse(AppConstants.kidsUrl));
@@ -535,7 +600,8 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
 
   Future<void> _handleAddToQueue() async {
     final url = await _controller.currentUrl() ?? '';
-    final videoId = YouTubeDownloaderService.extractVideoId(url) ?? _activeVideoId;
+    final videoId =
+        YouTubeDownloaderService.extractVideoId(url) ?? _activeVideoId;
     if (videoId == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -591,7 +657,10 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
             final queue = QueueService.instance.queue;
             return SafeArea(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 20,
+                ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -601,16 +670,25 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                         Container(
                           padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFFF0000).withValues(alpha: 0.15),
+                            color: const Color(0xFFFF0000)
+                                .withValues(alpha: 0.15),
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          child: const Icon(Icons.queue_music_rounded, color: Color(0xFFFF0000), size: 22),
+                          child: const Icon(
+                            Icons.queue_music_rounded,
+                            color: Color(0xFFFF0000),
+                            size: 22,
+                          ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
                             'Watch Queue (${queue.length})',
-                            style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 17,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                         if (queue.isNotEmpty)
@@ -620,7 +698,13 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                               setModalState(() {});
                               setState(() {});
                             },
-                            child: const Text('Clear All', style: TextStyle(color: Colors.white54, fontSize: 13)),
+                            child: const Text(
+                              'Clear All',
+                              style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: 13,
+                              ),
+                            ),
                           ),
                       ],
                     ),
@@ -633,12 +717,20 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                             _handleAddToQueue();
                             setModalState(() {});
                           },
-                          icon: const Icon(Icons.playlist_add_rounded, size: 20),
+                          icon: const Icon(
+                            Icons.playlist_add_rounded,
+                            size: 20,
+                          ),
                           label: const Text('Add Current Video to Queue'),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: const Color(0xFF3EA6FF),
-                            side: const BorderSide(color: Color(0xFF3EA6FF), width: 1),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            side: const BorderSide(
+                              color: Color(0xFF3EA6FF),
+                              width: 1,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                             minimumSize: const Size.fromHeight(42),
                           ),
                         ),
@@ -650,7 +742,11 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                           child: Text(
                             'Queue is empty.\nAdd videos to watch them back-to-back without interruption.',
                             textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.white54, fontSize: 13, height: 1.4),
+                            style: TextStyle(
+                              color: Colors.white54,
+                              fontSize: 13,
+                              height: 1.4,
+                            ),
                           ),
                         ),
                       )
@@ -660,7 +756,8 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                         child: ListView.separated(
                           shrinkWrap: true,
                           itemCount: queue.length,
-                          separatorBuilder: (context, index) => const Divider(color: Colors.white12, height: 1),
+                          separatorBuilder: (context, index) =>
+                              const Divider(color: Colors.white12, height: 1),
                           itemBuilder: (context, index) {
                             final item = queue[index];
                             return ListTile(
@@ -673,21 +770,36 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: const Center(
-                                  child: Icon(Icons.play_arrow_rounded, color: Colors.white, size: 20),
+                                  child: Icon(
+                                    Icons.play_arrow_rounded,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
                                 ),
                               ),
                               title: Text(
                                 item.title,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                               subtitle: Text(
                                 'Up next #${index + 1}',
-                                style: const TextStyle(color: Colors.white54, fontSize: 11),
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 11,
+                                ),
                               ),
                               trailing: IconButton(
-                                icon: const Icon(Icons.delete_outline_rounded, color: Colors.white54, size: 20),
+                                icon: const Icon(
+                                  Icons.delete_outline_rounded,
+                                  color: Colors.white54,
+                                  size: 20,
+                                ),
                                 onPressed: () {
                                   QueueService.instance.removeAt(index);
                                   setModalState(() {});
@@ -734,10 +846,15 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                       Container(
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFF0000).withValues(alpha: 0.15),
+                          color: const Color(0xFFFF0000)
+                              .withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: const Icon(Icons.stars_rounded, color: Color(0xFFFF0000), size: 24),
+                        child: const Icon(
+                          Icons.stars_rounded,
+                          color: Color(0xFFFF0000),
+                          size: 24,
+                        ),
                       ),
                       const SizedBox(width: 12),
                       const Column(
@@ -745,12 +862,20 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                         children: [
                           Text(
                             'YouTube Premium Benefits',
-                            style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 17,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                           SizedBox(height: 2),
                           Text(
                             'All core & extra features enabled',
-                            style: TextStyle(color: Color(0xFF00E676), fontSize: 12, fontWeight: FontWeight.w600),
+                            style: TextStyle(
+                              color: Color(0xFF00E676),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ],
                       ),
@@ -761,7 +886,8 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                     icon: Icons.block_flipped,
                     iconColor: const Color(0xFF00E676),
                     title: 'Ad-Free Viewing',
-                    subtitle: 'Commercial-free across YouTube, YouTube Kids & Music.',
+                    subtitle:
+                        'Commercial-free across YouTube, YouTube Kids & Music.',
                     statusBadge: 'Active',
                   ),
                   _buildFeatureTile(
@@ -775,7 +901,8 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                     icon: Icons.music_note_rounded,
                     iconColor: const Color(0xFFFF0000),
                     title: 'YouTube Music Premium',
-                    subtitle: 'Stream 100M+ songs with 256kbps high-quality audio.',
+                    subtitle:
+                        'Stream 100M+ songs with 256kbps high-quality audio.',
                     actionLabel: 'Open Music',
                     onAction: () {
                       Navigator.of(context).pop();
@@ -786,7 +913,8 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                     icon: Icons.child_care_rounded,
                     iconColor: Colors.amber,
                     title: 'YouTube Kids',
-                    subtitle: 'Safe, curated, ad-free environment for children.',
+                    subtitle:
+                        'Safe, curated, ad-free environment for children.',
                     actionLabel: 'Open Kids',
                     onAction: () {
                       Navigator.of(context).pop();
@@ -868,12 +996,20 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   subtitle,
-                  style: const TextStyle(color: Colors.white60, fontSize: 12, height: 1.3),
+                  style: const TextStyle(
+                    color: Colors.white60,
+                    fontSize: 12,
+                    height: 1.3,
+                  ),
                 ),
               ],
             ),
@@ -887,7 +1023,11 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
               ),
               child: Text(
                 statusBadge,
-                style: const TextStyle(color: Color(0xFF00E676), fontSize: 10, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  color: Color(0xFF00E676),
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             )
           else if (actionLabel != null && onAction != null)
@@ -898,7 +1038,13 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 visualDensity: VisualDensity.compact,
               ),
-              child: Text(actionLabel, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+              child: Text(
+                actionLabel,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ),
         ],
       ),
@@ -907,7 +1053,9 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
 
   Widget _buildContinueWatchingBanner() {
     final lastCheckpoint = WatchHistoryService.instance.lastWatched;
-    if (lastCheckpoint == null || _activeVideoId != null || _currentNavIndex != 0) {
+    if (lastCheckpoint == null ||
+        _activeVideoId != null ||
+        _currentNavIndex != 0) {
       return const SizedBox.shrink();
     }
 
@@ -924,7 +1072,10 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
           decoration: BoxDecoration(
             color: const Color(0xFF1E1E1E),
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFFF0000).withValues(alpha: 0.3), width: 1),
+            border: Border.all(
+              color: const Color(0xFFFF0000).withValues(alpha: 0.3),
+              width: 1,
+            ),
           ),
           child: Row(
             children: [
@@ -934,7 +1085,11 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                   color: Color(0xFFFF0000),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 20),
+                child: const Icon(
+                  Icons.play_arrow_rounded,
+                  color: Colors.white,
+                  size: 20,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -956,7 +1111,10 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                         const SizedBox(width: 6),
                         Text(
                           '• ${lastCheckpoint.positionFormatted}',
-                          style: const TextStyle(color: Colors.white70, fontSize: 11),
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 11,
+                          ),
                         ),
                       ],
                     ),
@@ -978,24 +1136,37 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
               FilledButton(
                 onPressed: () {
                   final isDesktop = _isDesktopMode ?? false;
-                  final base = isDesktop ? 'https://www.youtube.com' : 'https://m.youtube.com';
-                  final url = '$base/watch?v=${lastCheckpoint.videoId}&t=${lastCheckpoint.positionSeconds}s';
+                  final base = isDesktop
+                      ? 'https://www.youtube.com'
+                      : 'https://m.youtube.com';
+                  final url =
+                      '$base/watch?v=${lastCheckpoint.videoId}&t=${lastCheckpoint.positionSeconds}s';
                   _controller.loadRequest(Uri.parse(url));
                 },
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFFFF0000),
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   visualDensity: VisualDensity.compact,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(18),
                   ),
                 ),
-                child: const Text('Resume', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                child: const Text(
+                  'Resume',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                ),
               ),
               const SizedBox(width: 4),
               IconButton(
-                icon: const Icon(Icons.close_rounded, color: Colors.white54, size: 18),
+                icon: const Icon(
+                  Icons.close_rounded,
+                  color: Colors.white54,
+                  size: 18,
+                ),
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
                 onPressed: () {
@@ -1064,9 +1235,13 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                       child: SizedBox(
                         height: 2.5,
                         child: LinearProgressIndicator(
-                          value: _loadingProgress > 0 ? _loadingProgress / 100 : null,
+                          value: _loadingProgress > 0
+                              ? _loadingProgress / 100
+                              : null,
                           backgroundColor: Colors.transparent,
-                          valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFFF0000)),
+                          valueColor: const AlwaysStoppedAnimation<Color>(
+                            Color(0xFFFF0000),
+                          ),
                         ),
                       ),
                     ),
@@ -1082,10 +1257,17 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                         borderRadius: BorderRadius.circular(12),
                         color: const Color(0xFF212121),
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
                           child: Row(
                             children: [
-                              const Icon(Icons.info_outline, color: Colors.amber, size: 22),
+                              const Icon(
+                                Icons.info_outline,
+                                color: Colors.amber,
+                                size: 22,
+                              ),
                               const SizedBox(width: 12),
                               Expanded(
                                 child: Text(
@@ -1102,7 +1284,9 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                                 onPressed: _returnToYouTubeFeed,
                                 style: TextButton.styleFrom(
                                   foregroundColor: const Color(0xFF3EA6FF),
-                                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                  ),
                                 ),
                                 child: const Text('Back to Feed'),
                               ),
@@ -1158,12 +1342,18 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
                               const SizedBox(height: 28),
                               FilledButton.icon(
                                 onPressed: _retry,
-                                icon: const Icon(Icons.refresh_rounded, size: 18),
+                                icon: const Icon(
+                                  Icons.refresh_rounded,
+                                  size: 18,
+                                ),
                                 label: const Text('Retry'),
                                 style: FilledButton.styleFrom(
                                   backgroundColor: const Color(0xFF3EA6FF),
                                   foregroundColor: Colors.black,
-                                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 24,
+                                    vertical: 12,
+                                  ),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(20),
                                   ),
@@ -1192,8 +1382,12 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
   /// Builds the WebViewWidget with Hybrid Composition and uninhibited drag gestures
   Widget _buildWebViewWidget() {
     final gestureRecognizers = <Factory<OneSequenceGestureRecognizer>>{
-      Factory<VerticalDragGestureRecognizer>(() => VerticalDragGestureRecognizer()),
-      Factory<HorizontalDragGestureRecognizer>(() => HorizontalDragGestureRecognizer()),
+      Factory<VerticalDragGestureRecognizer>(
+        () => VerticalDragGestureRecognizer(),
+      ),
+      Factory<HorizontalDragGestureRecognizer>(
+        () => HorizontalDragGestureRecognizer(),
+      ),
     };
 
     if (WebViewPlatform.instance is AndroidWebViewPlatform) {
@@ -1217,11 +1411,8 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
   /// Opens the native offline downloads management screen
   void _openDownloadsScreen() {
     if (!mounted) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => const DownloadsScreen(),
-      ),
-    );
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (context) => const DownloadsScreen()));
   }
 
   /// Native 4-tab bottom navigation bar: [Home] [Shorts] [You] [Download]
@@ -1229,12 +1420,7 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
     return Container(
       decoration: const BoxDecoration(
         color: Color(0xFF0F0F0F),
-        border: Border(
-          top: BorderSide(
-            color: Color(0x22FFFFFF),
-            width: 0.8,
-          ),
-        ),
+        border: Border(top: BorderSide(color: Color(0x22FFFFFF), width: 0.8)),
       ),
       child: SafeArea(
         top: false,
@@ -1254,8 +1440,14 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
               unselectedItemColor: const Color(0xFFAAAAAA),
               selectedFontSize: 10,
               unselectedFontSize: 10,
-              selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, height: 1.3),
-              unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.normal, height: 1.3),
+              selectedLabelStyle: const TextStyle(
+                fontWeight: FontWeight.w600,
+                height: 1.3,
+              ),
+              unselectedLabelStyle: const TextStyle(
+                fontWeight: FontWeight.normal,
+                height: 1.3,
+              ),
               elevation: 0,
               items: const [
                 BottomNavigationBarItem(
@@ -1300,16 +1492,24 @@ class _YouTubeWebViewShellState extends State<YouTubeWebViewShell> {
     final bool isDesktop = _isDesktopMode == true;
     switch (index) {
       case 0:
-        targetUrl = isDesktop ? 'https://www.youtube.com/' : 'https://m.youtube.com/';
+        targetUrl = isDesktop
+            ? 'https://www.youtube.com/'
+            : 'https://m.youtube.com/';
         break;
       case 1:
-        targetUrl = isDesktop ? 'https://www.youtube.com/shorts' : 'https://m.youtube.com/shorts';
+        targetUrl = isDesktop
+            ? 'https://www.youtube.com/shorts'
+            : 'https://m.youtube.com/shorts';
         break;
       case 2:
-        targetUrl = isDesktop ? 'https://www.youtube.com/feed/you' : 'https://m.youtube.com/feed/you';
+        targetUrl = isDesktop
+            ? 'https://www.youtube.com/feed/you'
+            : 'https://m.youtube.com/feed/you';
         break;
       default:
-        targetUrl = isDesktop ? 'https://www.youtube.com/' : 'https://m.youtube.com/';
+        targetUrl = isDesktop
+            ? 'https://www.youtube.com/'
+            : 'https://m.youtube.com/';
     }
 
     _controller.loadRequest(Uri.parse(targetUrl));

@@ -1,18 +1,13 @@
 import 'dart:async';
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
+
 import 'youtube_downloader_service.dart';
 
 /// Status of an individual media download task.
-enum DownloadStatus {
-  queued,
-  downloading,
-  paused,
-  completed,
-  failed,
-  canceled,
-}
+enum DownloadStatus { queued, downloading, paused, completed, failed, canceled }
 
 /// Represents an active or completed download task with pause/resume support.
 class DownloadTask {
@@ -59,6 +54,11 @@ class DownloadTask {
   String progressText;
   String? errorMessage;
 
+  /// Smoothed instantaneous transfer rate shown by the downloads UI.
+  double bytesPerSecond = 0;
+  DateTime? _lastSpeedSampleAt;
+  int _lastSpeedSampleBytes = 0;
+
   HttpClient? _activeClient;
   StreamSubscription<List<int>>? _streamSubscription;
   IOSink? _fileSink;
@@ -82,11 +82,13 @@ class DownloadManager extends ChangeNotifier {
 
   /// Returns all currently in-progress tasks (downloading, paused, queued, or failed).
   List<DownloadTask> get inProgressTasks => _tasks.values
-      .where((t) =>
-          t.status == DownloadStatus.downloading ||
-          t.status == DownloadStatus.paused ||
-          t.status == DownloadStatus.queued ||
-          t.status == DownloadStatus.failed)
+      .where(
+        (t) =>
+            t.status == DownloadStatus.downloading ||
+            t.status == DownloadStatus.paused ||
+            t.status == DownloadStatus.queued ||
+            t.status == DownloadStatus.failed,
+      )
       .toList();
 
   DownloadTask? getTask(String id) => _tasks[id];
@@ -213,6 +215,9 @@ class DownloadManager extends ChangeNotifier {
     task.status = DownloadStatus.downloading;
     task.errorMessage = null;
     task.progressText = 'Resuming...';
+    task.bytesPerSecond = 0;
+    task._lastSpeedSampleAt = null;
+    task._lastSpeedSampleBytes = task.receivedBytes;
     notifyListeners();
 
     _executeDownload(task);
@@ -268,6 +273,8 @@ class DownloadManager extends ChangeNotifier {
       }
 
       task.receivedBytes = existingBytes;
+      task._lastSpeedSampleBytes = existingBytes;
+      task._lastSpeedSampleAt = DateTime.now();
       if (task.totalBytes > 0) {
         task.progress = (existingBytes / task.totalBytes).clamp(0.0, 1.0);
       }
@@ -283,14 +290,20 @@ class DownloadManager extends ChangeNotifier {
       if (response.statusCode == HttpStatus.forbidden ||
           response.statusCode == HttpStatus.gone ||
           response.statusCode == HttpStatus.notFound) {
-        debugPrint('[DownloadManager] Stream URL expired for ${task.videoId}. Refreshing stream manifest...');
+        debugPrint(
+          '[DownloadManager] Stream URL expired for ${task.videoId}. Refreshing stream manifest...',
+        );
         final yt = YoutubeExplode();
         try {
-          final manifest = await yt.videos.streamsClient.getManifest(task.videoId);
+          final manifest = await yt.videos.streamsClient.getManifest(
+            task.videoId,
+          );
           final freshStream = manifest.streams.firstWhere(
             (s) => s.tag == task.streamInfo.tag,
             orElse: () => manifest.streams.firstWhere(
-              (s) => s.container == task.streamInfo.container && s.size.totalBytes == task.totalBytes,
+              (s) =>
+                  s.container == task.streamInfo.container &&
+                  s.size.totalBytes == task.totalBytes,
               orElse: () => task.streamInfo,
             ),
           );
@@ -317,7 +330,9 @@ class DownloadManager extends ChangeNotifier {
       }
 
       // Open temp file in append mode if resuming, or write if starting fresh
-      final openMode = (existingBytes > 0 && response.statusCode == HttpStatus.partialContent)
+      final openMode =
+          (existingBytes > 0 &&
+              response.statusCode == HttpStatus.partialContent)
           ? FileMode.append
           : FileMode.write;
 
@@ -334,12 +349,33 @@ class DownloadManager extends ChangeNotifier {
           sink.add(chunk);
           task.receivedBytes += chunk.length;
           if (task.totalBytes > 0) {
-            task.progress = (task.receivedBytes / task.totalBytes).clamp(0.0, 1.0);
+            task.progress = (task.receivedBytes / task.totalBytes).clamp(
+              0.0,
+              1.0,
+            );
           }
-          final receivedMb = (task.receivedBytes / (1024 * 1024)).toStringAsFixed(1);
+          final receivedMb = (task.receivedBytes / (1024 * 1024))
+              .toStringAsFixed(1);
           final totalMb = (task.totalBytes / (1024 * 1024)).toStringAsFixed(1);
           final percent = (task.progress * 100).round();
-          task.progressText = '$receivedMb / $totalMb MB ($percent%)';
+          final now = DateTime.now();
+          final previousSample = task._lastSpeedSampleAt;
+          if (previousSample != null) {
+            final elapsedMs = now.difference(previousSample).inMilliseconds;
+            if (elapsedMs >= 500) {
+              final sampleRate =
+                  (task.receivedBytes - task._lastSpeedSampleBytes) *
+                  1000 /
+                  elapsedMs;
+              task.bytesPerSecond = task.bytesPerSecond == 0
+                  ? sampleRate
+                  : (task.bytesPerSecond * 0.65) + (sampleRate * 0.35);
+              task._lastSpeedSampleAt = now;
+              task._lastSpeedSampleBytes = task.receivedBytes;
+            }
+          }
+          final speed = _formatTransferRate(task.bytesPerSecond);
+          task.progressText = '$receivedMb / $totalMb MB ($percent%) • $speed';
           notifyListeners();
         },
         onDone: () async {
@@ -392,6 +428,7 @@ class DownloadManager extends ChangeNotifier {
       await task.tempFile.rename(task.targetFile.path);
       task.status = DownloadStatus.completed;
       task.progress = 1.0;
+      task.bytesPerSecond = 0;
       task.progressText = 'Completed';
       notifyListeners();
     } catch (e) {
@@ -399,5 +436,13 @@ class DownloadManager extends ChangeNotifier {
       task.errorMessage = 'Failed to save completed file: $e';
       notifyListeners();
     }
+  }
+
+  static String _formatTransferRate(double bytesPerSecond) {
+    if (bytesPerSecond <= 0) return 'Calculating speed…';
+    if (bytesPerSecond >= 1024 * 1024) {
+      return '${(bytesPerSecond / (1024 * 1024)).toStringAsFixed(1)} MB/s';
+    }
+    return '${(bytesPerSecond / 1024).toStringAsFixed(0)} KB/s';
   }
 }
